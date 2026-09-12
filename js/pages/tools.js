@@ -437,6 +437,31 @@ PAGES.tools = {
       </div>
 
       <div class="card" data-qg="abs">
+        <div class="card-t"><h3>${icon('vial')}上板方案 · 各孔加样表</h3><span class="badge teal">绝对定量</span></div>
+        <div class="frow">
+          <div class="fld"><span>标准品管数</span><div class="ctl"><input id="pl-n" type="number" inputmode="numeric" value="8"></div></div>
+          <div class="fld"><span>样品孔数(含重复)</span><div class="ctl"><input id="pl-s" type="number" inputmode="numeric" value="6"></div></div>
+          <div class="fld"><span>NTC 孔数</span><div class="ctl"><input id="pl-ntc" type="number" inputmode="numeric" value="1"></div></div>
+        </div>
+        <div class="frow">
+          <div class="fld"><span>总体积/孔</span><div class="ctl"><input id="pl-v" type="number" inputmode="decimal" value="20"><span class="u">µL</span></div></div>
+          <div class="fld"><span>标准品·模板/孔</span><div class="ctl"><input id="pl-tpl" type="number" inputmode="decimal" value="2"><span class="u">µL</span></div></div>
+          <div class="fld"><span>配液余量</span><div class="ctl"><input id="pl-ov" type="number" inputmode="decimal" value="10"><span class="u">%</span></div></div>
+        </div>
+        <div class="frow">
+          <div class="fld"><span>引物终浓度</span><div class="ctl"><input id="pl-pf" type="number" inputmode="decimal" value="0.3"><span class="u">µM</span></div></div>
+          <div class="fld"><span>引物母液</span><div class="ctl"><input id="pl-ps" type="number" inputmode="decimal" value="10"><span class="u">µM</span></div></div>
+          <div class="fld"><span>探针终浓度</span><div class="ctl"><input id="pl-tf" type="number" inputmode="decimal" value="0.25"><span class="u">µM</span></div></div>
+        </div>
+        <div class="frow">
+          <div class="fld"><span>探针母液</span><div class="ctl"><input id="pl-ts" type="number" inputmode="decimal" value="10"><span class="u">µM</span></div></div>
+          <div class="fld"><span>染料终浓度</span><div class="ctl"><input id="pl-df" type="number" inputmode="decimal" value="0"><span class="u">µM</span></div></div>
+          <div class="fld"><span>染料母液</span><div class="ctl"><input id="pl-ds" type="number" inputmode="decimal" value="25"><span class="u">µM</span></div></div>
+        </div>
+        <div id="pl-out"></div>
+      </div>
+
+      <div class="card" data-qg="abs">
         <div class="card-t"><h3>${icon('dna')}拷贝数换算</h3></div>
         <div class="frow">
           <div class="fld"><span>质量</span><div class="ctl"><input id="cn-ng" type="number" inputmode="decimal" placeholder="如 1"><span class="u">ng</span></div></div>
@@ -549,6 +574,43 @@ PAGES.tools = {
     this.bind('#sd-c0,#sd-unit,#sd-bp,#sd-f,#sd-n,#sd-v', p, calcSD);
     p.querySelector('#sd-first').addEventListener('change', calcSD);
     calcSD();
+
+    /* --- 上板方案：逐孔加样表 + 预混液 --- */
+    const calcPL=()=>{
+      const out=p.querySelector('#pl-out');
+      const n=getNum('#pl-n'), s=getNum('#pl-s'), ntc=getNum('#pl-ntc');
+      const V=getNum('#pl-v'), tpl=getNum('#pl-tpl'), ov=getNum('#pl-ov');
+      const pf=getNum('#pl-pf'), ps=getNum('#pl-ps');
+      const tf=getNum('#pl-tf'), ts=getNum('#pl-ts');
+      const df=getNum('#pl-df')||0, ds=getNum('#pl-ds')||25;
+      if([n,s,ntc,V,tpl,ov,pf,ps].some(isNaN)||n<1||s<0||ntc<0||V<=0||tpl<0||ov<0){ out.innerHTML=''; return; }
+      const mix=V/2, pfV=pf*V/ps, prV=pf*V/ps;
+      const vt=(tf>0&&ts>0)? tf*V/ts : 0, vd=(df>0&&ds>0)? df*V/ds : 0;
+      const water=V-mix-pfV-prV-vt-vd-tpl;
+      if(water<0){ out.innerHTML=`<div class="warn-note" style="margin:0">${icon('alert')}<span>各组分体积已超过每孔总体积 ${fmtN(V)} µL，请调整。</span></div>`; return; }
+      const total=n+s+ntc, M=total*(1+ov/100);
+      const mm=V-tpl; /* 每孔预混液体积 */
+      const T=x=>fmtN(x*M,3);
+      const num2=x=>fmtN(x,2);
+      const row=(name,src)=>`<tr><td style="white-space:nowrap">${name}</td><td class="num">${num2(mix)}</td><td class="num">${num2(pfV)}</td><td class="num">${num2(prV)}</td><td class="num">${vt?num2(vt):'—'}</td><td class="num">${vd?num2(vd):'—'}</td><td class="num" style="font-weight:700;color:var(--primary)">${num2(tpl)}</td><td class="num">${num2(water)}</td></tr>`;
+      let rows='';
+      for(let i=0;i<n;i++) rows+=row(`标准品 ${i+1}`);
+      for(let i=0;i<s;i++) rows+=row(`样品 ${i+1}`);
+      for(let i=0;i<ntc;i++) rows+=row(`NTC`);
+      const mmWater=mm-mix-pfV-prV-vt-vd;
+      out.innerHTML=`
+        <div class="result-card">
+          <div class="rl">${icon('zap')}<span>共 ${total} 孔（标准品 ${n} + 样品 ${s} + NTC ${ntc}）· 每孔 ${fmtN(V)} µL</span></div>
+          <div class="rx">每孔加样：2× Mix ${num2(mix)} + F引物 ${num2(pfV)} + R引物 ${num2(prV)}${vt?` + 探针 ${num2(vt)}`:''}${vd?` + 染料 ${num2(vd)}`:''} + <b>标准品/cDNA ${num2(tpl)}</b> + 无酶水 ${num2(water)} µL。<br>标准品行加入稀释方案第 i 管各 ${num2(tpl)} µL；NTC 孔的模板位置加 ${num2(tpl)} µL 无酶水。</div>
+        </div>
+        <div class="tbl-wrap"><table class="tbl">
+          <tr><th>孔</th><th>2×Mix(µL)</th><th>F引物</th><th>R引物</th><th>探针</th><th>染料</th><th>标准品/模板</th><th>无酶水</th></tr>
+          ${rows}
+        </table></div>
+        <div class="info-note" style="margin:0">${icon('info')}<span><b>省力做法（预混液）</b>：按 ${total} 孔 + ${fmtN(ov)}% 余量 = <b>${fmtN(M,3)} 份</b>，每份 ${num2(mm)} µL：2× Mix ${T(mix)} + F引物 ${T(pfV)} + R引物 ${T(prV)}${vt?` + 探针 ${T(vt)}`:''}${vd?` + 染料 ${T(vd)}`:''} + 无酶水 ${T(mmWater)} µL，涡旋混匀后每孔分装 ${num2(mm)} µL，最后各孔分别加入 ${num2(tpl)} µL 对应标准品/样品 cDNA（NTC 加水），封膜离心上机。</span></div>`;
+    };
+    this.bind('#pl-n,#pl-s,#pl-ntc,#pl-v,#pl-tpl,#pl-ov,#pl-pf,#pl-ps,#pl-tf,#pl-ts,#pl-df,#pl-ds', p, calcPL);
+    calcPL();
 
     /* --- ΔΔCq --- */
     const calcDD=()=>{
