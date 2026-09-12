@@ -1,0 +1,17 @@
+{
+  "name": "合成生物学实验助手",
+  "short_name": "实验助手",
+  "description": "食品合成生物学小组的实验室工具：溶液配制、单位换算、实验记录、计时器、实验规划、分子工具箱与库存管理，离线可用。",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F4F6FA",
+  "theme_color": "#2B6BF3",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
