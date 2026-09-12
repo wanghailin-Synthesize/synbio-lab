@@ -376,7 +376,11 @@ PAGES.tools = {
 
   gQpcr(p){
     p.innerHTML=`
-      <div class="card">
+      <div class="chips" style="padding:0 0 10px" id="qg-chips">
+        ${[['all','全部'],['abs','绝对定量'],['rel','相对定量'],['mix','反应体系']].map(t=>`<button class="chip ${t[0]==='all'?'on':''}" data-qg2="${t[0]}">${t[1]}</button>`).join('')}
+      </div>
+      <div class="info-note">${icon('info')}<span><b>绝对定量</b>：① 配标准品 10ⁿ 梯度 → ② 标准曲线验证效率 → ③ 由样品 Cq 反推拷贝数。<b>相对定量</b>：用 ΔΔCq 或 Pfaffl 直接算倍数变化。</span></div>
+      <div class="card" data-qg="abs">
         <div class="card-t"><h3>${icon('target')}标准曲线 · 扩增效率</h3></div>
         <div class="fld"><span>粘贴数据（每行一条：相对浓度, Cq）</span>
           <div class="ctl"><textarea id="qc-sc" rows="4" placeholder="1, 15.32&#10;0.1, 18.65&#10;0.01, 21.98&#10;0.001, 25.30&#10;0.0001, 28.65" style="font-family:ui-monospace,Menlo,monospace"></textarea></div>
@@ -386,7 +390,7 @@ PAGES.tools = {
         <div id="qc-scout"></div>
       </div>
 
-      <div class="card">
+      <div class="card" data-qg="rel">
         <div class="card-t"><h3>${icon('sigma')}ΔΔCq 相对定量</h3></div>
         <div class="frow">
           <div class="fld"><span>靶基因 Cq · 处理组</span><div class="ctl"><input id="qc-tt" placeholder="18.2, 18.4, 18.1"></div></div>
@@ -399,7 +403,7 @@ PAGES.tools = {
         <div id="qc-ddout"></div>
       </div>
 
-      <div class="card">
+      <div class="card" data-qg="rel">
         <div class="card-t"><h3>${icon('sigma')}Pfaffl 效率校正相对定量</h3></div>
         <div class="frow">
           <div class="fld"><span>靶 Cq · 处理组</span><div class="ctl"><input id="qf-tt"></div></div>
@@ -416,7 +420,23 @@ PAGES.tools = {
         <div id="qf-out"></div>
       </div>
 
-      <div class="card">
+      <div class="card" data-qg="abs">
+        <div class="card-t"><h3>${icon('list')}标准品 10ⁿ 系列稀释方案</h3><span class="badge teal">梯度制备</span></div>
+        <div class="frow">
+          <div class="fld"><span>母液浓度</span><div class="ctl"><input id="sd-c0" type="number" inputmode="decimal" placeholder="如 1"><span class="u" id="sd-u0">copies/µL</span></div></div>
+          <div class="fld"><span>母液单位</span><div class="ctl"><select id="sd-unit"><option value="copies">copies/µL</option><option value="ng">ng/µL</option></select></div></div>
+        </div>
+        <div class="fld" id="sd-bp-f" style="display:none"><span>片段长度（换算拷贝数用）</span><div class="ctl"><input id="sd-bp" type="number" inputmode="decimal" placeholder="如 300"><span class="u">bp</span></div></div>
+        <div class="frow">
+          <div class="fld"><span>梯度倍数</span><div class="ctl"><input id="sd-f" type="number" inputmode="decimal" value="10"><span class="u">倍</span></div></div>
+          <div class="fld"><span>管数</span><div class="ctl"><input id="sd-n" type="number" inputmode="numeric" value="8"></div></div>
+          <div class="fld"><span>每管体积</span><div class="ctl"><input id="sd-v" type="number" inputmode="decimal" value="100"><span class="u">µL</span></div></div>
+        </div>
+        <label class="fld" style="display:flex;align-items:center;gap:9px;font-size:14px;font-weight:600;color:var(--text)"><input type="checkbox" id="sd-first" checked style="width:18px;height:18px;accent-color:var(--primary)">最高浓度管直接用母液</label>
+        <div id="sd-out"></div>
+      </div>
+
+      <div class="card" data-qg="abs">
         <div class="card-t"><h3>${icon('dna')}拷贝数换算</h3></div>
         <div class="frow">
           <div class="fld"><span>质量</span><div class="ctl"><input id="cn-ng" type="number" inputmode="decimal" placeholder="如 1"><span class="u">ng</span></div></div>
@@ -437,8 +457,8 @@ PAGES.tools = {
         <div id="cn-out2"></div>
       </div>
 
-      <div class="card">
-        <div class="card-t"><h3>${icon('flask')}qPCR 反应体系</h3><span class="badge teal">SYBR / 探针</span></div>
+      <div class="card" data-qg="mix">
+        <div class="card-t"><h3>${icon('flask')}qPCR 反应体系</h3><span class="badge teal">SYBR / 探针 / 染料</span></div>
         <div class="frow">
           <div class="fld"><span>总体积</span><div class="ctl"><input id="qm-v" type="number" inputmode="decimal" value="20"><span class="u">µL</span></div></div>
           <div class="fld"><span>引物终浓度</span><div class="ctl"><input id="qm-pf" type="number" inputmode="decimal" value="0.3"><span class="u">µM</span></div></div>
@@ -448,6 +468,11 @@ PAGES.tools = {
           <div class="fld"><span>探针终浓度</span><div class="ctl"><input id="qm-tf" type="number" inputmode="decimal" value="0.25"><span class="u">µM</span></div></div>
           <div class="fld"><span>探针母液</span><div class="ctl"><input id="qm-ts" type="number" inputmode="decimal" value="10"><span class="u">µM</span></div></div>
           <div class="fld"><span>cDNA 模板</span><div class="ctl"><input id="qm-tpl" type="number" inputmode="decimal" value="2"><span class="u">µL</span></div></div>
+        </div>
+        <div class="frow">
+          <div class="fld"><span>染料终浓度（ROX 等）</span><div class="ctl"><input id="qm-df" type="number" inputmode="decimal" value="0"><span class="u">µM</span></div></div>
+          <div class="fld"><span>染料母液</span><div class="ctl"><input id="qm-ds" type="number" inputmode="decimal" value="25"><span class="u">µM</span></div></div>
+          <div class="fld"><span>模板预稀释</span><div class="ctl"><input id="qm-dil" type="number" inputmode="decimal" value="1"><span class="u">倍</span></div></div>
         </div>
         <div id="qm-out"></div>
       </div>
@@ -484,6 +509,46 @@ PAGES.tools = {
       p.querySelector('#qc-sc').value='1, 15.32\n0.1, 18.65\n0.01, 21.98\n0.001, 25.30\n0.0001, 28.65';
       calcSC();
     };
+
+    /* --- 标准品 10ⁿ 系列稀释方案 --- */
+    const calcSD=()=>{
+      const out=p.querySelector('#sd-out');
+      const c0=getNum('#sd-c0'), unit=p.querySelector('#sd-unit').value;
+      const f=getNum('#sd-f'), n=getNum('#sd-n'), V=getNum('#sd-v'), bp=getNum('#sd-bp');
+      p.querySelector('#sd-u0').textContent = unit==='ng'?'ng/µL':'copies/µL';
+      p.querySelector('#sd-bp-f').style.display = unit==='ng'?'':'none';
+      if(isNaN(c0)||c0<=0||isNaN(f)||f<=1||isNaN(n)||n<1||n>15||isNaN(V)||V<=0){ out.innerHTML=''; return; }
+      let c0cp=c0, uNote='';
+      if(unit==='ng'){
+        if(isNaN(bp)||bp<=0){ out.innerHTML=`<div class="warn-note" style="margin:0">${icon('alert')}<span>母液单位为 ng/µL 时，请填写片段长度以换算拷贝数。</span></div>`; return; }
+        c0cp=c0*1e-9*6.022e23/(bp*660);
+        uNote=`<br>母液换算：${fmtN(c0)} ng/µL × ${fmtN(bp)} bp ≈ ${sciFmt(c0cp)} copies/µL`;
+      }
+      const useStock=p.querySelector('#sd-first').checked;
+      const c1=useStock? c0cp : c0cp/f;
+      const take=V/f;
+      const SUP='⁰¹²³⁴⁵⁶⁷⁸⁹';
+      const supN=k=>'10'+String(k).replace('-','⁻').replace(/\d/g,d=>SUP[+d]);
+      const lg=Math.log10(c1);
+      const rows=[];
+      for(let i=0;i<n;i++){
+        const C=c1/Math.pow(f,i);
+        const tag=(Math.abs(f-10)<1e-9)? ` <span class="badge blue">${supN(Math.round(lg)-i)}</span>`:'';
+        const op=(i===0&&useStock)? '母液直接作为 1 号标准品' : `取${i===0?'母液':'上一管'} ${fmtN(take,3)} + 稀释液 ${fmtN(V-take,3)}`;
+        rows.push(`<tr><td class="num">${i+1} 号管${tag}</td><td class="num" style="font-weight:700;color:var(--primary)">${sciFmt(C)}</td><td class="num" style="font-size:12px">${op}</td></tr>`);
+      }
+      const needStock=(useStock?0:take)+(n-1)*take;
+      const tinyWarn = take<2 ? `<div class="warn-note" style="margin:0;margin-top:12px">${icon('alert')}<span>单次转移仅 ${fmtN(take,3)} µL，移液误差偏大；建议增大每管体积，或先做一次 100× 中间稀释再逐管 ${fmtN(f)}×。</span></div>` : '';
+      out.innerHTML=`
+        <div class="result-card">
+          <div class="rl">${icon('zap')}<span>共 ${n} 管 · 每管 ${fmtN(V)} µL · 1 号管 ${sciFmt(c1)} copies/µL${uNote}</span></div>
+          <div class="rx">共需母液约 ${fmtN(needStock,3)} µL，建议按 2 倍量准备；稀释液建议 TE 或 10mM Tris-HCl + 50µg/mL 载体 DNA（防低浓度标准品吸附管壁），每管混匀后再转移。</div>
+        </div>
+        <div class="tbl-wrap"><table class="tbl"><tr><th>管号</th><th>浓度 copies/µL</th><th>操作</th></tr>${rows.join('')}</table></div>${tinyWarn}`;
+    };
+    this.bind('#sd-c0,#sd-unit,#sd-bp,#sd-f,#sd-n,#sd-v', p, calcSD);
+    p.querySelector('#sd-first').addEventListener('change', calcSD);
+    calcSD();
 
     /* --- ΔΔCq --- */
     const calcDD=()=>{
@@ -542,18 +607,32 @@ PAGES.tools = {
     /* --- 反应体系 --- */
     const calcQM=()=>{
       const V=getNum('#qm-v'), pf=getNum('#qm-pf'), ps=getNum('#qm-ps'),
-            tf=getNum('#qm-tf'), ts=getNum('#qm-ts'), tpl=getNum('#qm-tpl')||0;
+            tf=getNum('#qm-tf'), ts=getNum('#qm-ts'), tpl=getNum('#qm-tpl')||0,
+            df=getNum('#qm-df')||0, ds=getNum('#qm-ds')||25, dil=getNum('#qm-dil')||1;
       const out=p.querySelector('#qm-out');
       if([V,pf,ps,tf,ts].some(isNaN) || V<=0){ out.innerHTML=''; return; }
-      const mix=V/2, vt=(tf*V/ts)||0;
+      const mix=V/2, vt=(tf*V/ts)||0, vd=(df>0&&ds>0)? df*V/ds : 0;
       const pfV=pf*V/ps, prV=pf*V/ps;
-      const water=V-mix-pfV-prV-vt-tpl;
+      const water=V-mix-pfV-prV-vt-vd-tpl;
       if(water<0){ out.innerHTML=`<div class="warn-note" style="margin:0">${icon('alert')}<span>各组分体积已超过总体积 ${fmtN(V)} µL，请调整。</span></div>`; return; }
+      const tplNote = dil>1 ? `<br>模板：cDNA 先按 1:${fmtN(dil)} 预稀释，取稀释液 ${fmtN(tpl,3)} µL（相当于原液 ${fmtN(tpl/dil,3)} µL）` : '';
       out.innerHTML=resultCard({label:'补无 RNase 水（ddH₂O）', value:fmtN(water,3), unit:'µL',
-        extra:`2× Mix ${fmtN(mix,3)} + 上游引物 ${fmtN(pfV,3)} + 下游引物 ${fmtN(prV,3)} + 探针 ${fmtN(vt,3)} + cDNA ${fmtN(tpl,3)} + 水 ${fmtN(water,3)} = ${fmtN(V)} µL<br>仅 SYBR 法（无探针）：把探针终浓度填 0 即可`,
-        copyText:`2×Mix ${mix}µL, 引物各 ${pfV.toFixed(2)}µL, 探针 ${vt.toFixed(2)}µL, cDNA ${tpl}µL, 水 ${water.toFixed(2)}µL`});
+        extra:`2× Mix ${fmtN(mix,3)} + 上游引物 ${fmtN(pfV,3)} + 下游引物 ${fmtN(prV,3)} + 探针 ${fmtN(vt,3)}${vd>0?` + 染料 ${fmtN(vd,3)}`:''} + cDNA ${fmtN(tpl,3)} + 水 ${fmtN(water,3)} = ${fmtN(V)} µL${tplNote}<br>仅 SYBR 法：把探针终浓度填 0；多数 2× Mix 已含染料，ROX 按仪器要求填（ABI 常为 0.5×）`,
+        copyText:`2×Mix ${mix}µL, 引物各 ${pfV.toFixed(2)}µL, 探针 ${vt.toFixed(2)}µL${vd>0?`, 染料 ${vd.toFixed(2)}µL`:''}, cDNA ${tpl}µL, 水 ${water.toFixed(2)}µL`});
     };
-    this.bind('#qm-v,#qm-pf,#qm-ps,#qm-tf,#qm-ts,#qm-tpl', p, calcQM);
+    this.bind('#qm-v,#qm-pf,#qm-ps,#qm-tf,#qm-ts,#qm-tpl,#qm-df,#qm-ds,#qm-dil', p, calcQM);
+
+    /* --- 分组筛选：绝对定量 / 相对定量 / 反应体系 --- */
+    const applyQG=()=>{
+      const on=p.querySelector('#qg-chips .chip.on');
+      const g=on?on.dataset.qg2:'all';
+      p.querySelectorAll('[data-qg]').forEach(c=>{ c.style.display=(g==='all'||c.dataset.qg===g)?'':'none'; });
+    };
+    p.querySelectorAll('[data-qg2]').forEach(b=>b.onclick=()=>{
+      p.querySelectorAll('[data-qg2]').forEach(x=>x.classList.toggle('on',x===b));
+      applyQG();
+    });
+    applyQG();
   },
 
   /* ============ 速查表 ============ */
