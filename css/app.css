@@ -171,6 +171,11 @@ svg{display:block}
 .chip:active{transform:scale(.94)}
 .chip-row{display:flex;gap:8px;flex-wrap:wrap}
 
+/* 色板（表单弹层选颜色） */
+.swatch{width:36px;height:36px;border-radius:12px;position:relative;flex-shrink:0;transition:transform .12s;padding:0}
+.swatch:active{transform:scale(.86)}
+.swatch.on::after{content:'';position:absolute;inset:-4px;border:2.5px solid var(--primary);border-radius:15px}
+
 /* ---------- 表单 ---------- */
 .fld{display:block;margin-bottom:13px}
 .fld>span{display:block;font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:6px}
@@ -285,9 +290,12 @@ input[type=date]{min-height:44px}
 .recipe .rc-head .rc-cat{margin-top:4px}
 .recipe .rc-body{padding:12px 16px 15px}
 .recipe .rc-vol{display:flex;align-items:center;gap:8px;margin:10px 0 6px}
-.recipe .rc-vol select{padding:6px 26px 6px 10px;border-radius:9px;border:1px solid var(--border);background:var(--surface-2);font-size:13px;font-weight:600;
-  appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%238E9BB0' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");background-repeat:no-repeat;background-position:right 8px center}
-.recipe .rc-vol .lb{font-size:12.5px;color:var(--text-3);font-weight:600}
+.recipe .rc-vol .vol-in{width:88px;padding:6px 10px;border-radius:9px;border:1px solid var(--border);background:var(--surface-2);
+  font-weight:700;text-align:right;font-variant-numeric:tabular-nums;flex-shrink:0}
+.recipe .rc-vol .vol-in::-webkit-outer-spin-button,
+.recipe .rc-vol .vol-in::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.recipe .rc-vol .vol-in{-moz-appearance:textfield;appearance:textfield}
+.recipe .rc-vol .lb{font-size:12.5px;color:var(--text-3);font-weight:600;flex-shrink:0}
 .recipe ul.ing{list-style:none;margin-top:6px}
 .recipe ul.ing li{display:flex;justify-content:space-between;gap-12px;padding:7.5px 0;border-bottom:1px dashed var(--border);font-size:14px}
 .recipe ul.ing li:last-child{border-bottom:none}
@@ -295,6 +303,18 @@ input[type=date]{min-height:44px}
 .recipe .rc-note{margin-top:10px;font-size:12.5px;color:var(--text-2);background:var(--surface-2);border-radius:10px;padding:9px 12px;line-height:1.6}
 .recipe .rc-steps{margin-top:10px;font-size:13px;color:var(--text-2);line-height:1.7;padding-left:2px}
 .recipe .rc-steps b{color:var(--text);font-weight:700}
+
+/* ---------- 冰箱盒子网格 ---------- */
+.bx-meta{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--text-3)}
+.bx-meta b{color:var(--primary);font-weight:800}
+.bx-grid{display:grid;gap:3px;margin-top:10px;user-select:none;-webkit-user-select:none}
+.bx-collab{font-size:10px;color:var(--text-3);font-weight:700;text-align:center;align-self:center}
+.bx-rowlab{font-size:10px;color:var(--text-3);font-weight:700;display:flex;align-items:center;justify-content:center}
+.bx-cell{aspect-ratio:1;min-width:0;min-height:0;border-radius:5px;background:var(--surface-2);border:1px solid var(--border-2);
+  display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:var(--text-3);
+  overflow:hidden;padding:0;line-height:1.05;transition:transform .1s;word-break:break-all}
+.bx-cell.on{background:var(--primary-soft);border-color:color-mix(in srgb,var(--primary) 32%,transparent);color:var(--primary)}
+.bx-cell:active{transform:scale(.86)}
 
 /* ---------- 计时器 ---------- */
 .timer-card{background:var(--surface);border:1px solid var(--border-2);border-radius:var(--radius);box-shadow:var(--shadow);

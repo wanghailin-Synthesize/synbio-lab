@@ -10,7 +10,7 @@ const DB = {
     return {
       v:1,
       settings:{ labName:'食品合成生物学小组', theme:'auto' },
-      projects:[], entries:[], tasks:[], protocols:[], inventory:[],
+      projects:[], entries:[], tasks:[], protocols:[], inventory:[], boxes:[],
       customRecipes:[], timers:[], flags:{}
     };
   },

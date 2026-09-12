@@ -458,6 +458,10 @@ PAGES.tools = {
           <div class="fld"><span>染料终浓度</span><div class="ctl"><input id="pl-df" type="number" inputmode="decimal" value="0"><span class="u">µM</span></div></div>
           <div class="fld"><span>染料母液</span><div class="ctl"><input id="pl-ds" type="number" inputmode="decimal" value="25"><span class="u">µM</span></div></div>
         </div>
+        <div class="frow">
+          <div class="fld"><span>1号标准品浓度(选填)</span><div class="ctl"><input id="pl-c1" type="number" inputmode="decimal" placeholder="填了显示梯度列"><span class="u">copies/µL</span></div></div>
+          <div class="fld"><span>梯度倍数</span><div class="ctl"><input id="pl-g" type="number" inputmode="decimal" value="10"><span class="u">倍</span></div></div>
+        </div>
         <div id="pl-out"></div>
       </div>
 
@@ -583,6 +587,8 @@ PAGES.tools = {
       const pf=getNum('#pl-pf'), ps=getNum('#pl-ps');
       const tf=getNum('#pl-tf'), ts=getNum('#pl-ts');
       const df=getNum('#pl-df')||0, ds=getNum('#pl-ds')||25;
+      const c1=getNum('#pl-c1'), g=getNum('#pl-g')||10;
+      const hasC=!isNaN(c1)&&c1>0;
       if([n,s,ntc,V,tpl,ov,pf,ps].some(isNaN)||n<1||s<0||ntc<0||V<=0||tpl<0||ov<0){ out.innerHTML=''; return; }
       const mix=V/2, pfV=pf*V/ps, prV=pf*V/ps;
       const vt=(tf>0&&ts>0)? tf*V/ts : 0, vd=(df>0&&ds>0)? df*V/ds : 0;
@@ -592,24 +598,33 @@ PAGES.tools = {
       const mm=V-tpl; /* 每孔预混液体积 */
       const T=x=>fmtN(x*M,3);
       const num2=x=>fmtN(x,2);
-      const row=(name,src)=>`<tr><td style="white-space:nowrap">${name}</td><td class="num">${num2(mix)}</td><td class="num">${num2(pfV)}</td><td class="num">${num2(prV)}</td><td class="num">${vt?num2(vt):'—'}</td><td class="num">${vd?num2(vd):'—'}</td><td class="num" style="font-weight:700;color:var(--primary)">${num2(tpl)}</td><td class="num">${num2(water)}</td></tr>`;
+      const SUP2='⁰¹²³⁴⁵⁶⁷⁸⁹';
+      const supN2=k=>'10'+String(k).replace('-','⁻').replace(/\d/g,d=>SUP2[+d]);
+      const row=(name,concHtml)=>`<tr><td style="white-space:nowrap">${name}</td>${hasC?`<td class="num" style="white-space:nowrap">${concHtml}</td>`:''}<td class="num">${num2(mix)}</td><td class="num">${num2(pfV)}</td><td class="num">${num2(prV)}</td><td class="num">${vt?num2(vt):'—'}</td><td class="num">${vd?num2(vd):'—'}</td><td class="num" style="font-weight:700;color:var(--primary)">${num2(tpl)}</td><td class="num">${num2(water)}</td></tr>`;
       let rows='';
-      for(let i=0;i<n;i++) rows+=row(`标准品 ${i+1}`);
-      for(let i=0;i<s;i++) rows+=row(`样品 ${i+1}`);
-      for(let i=0;i<ntc;i++) rows+=row(`NTC`);
+      for(let i=0;i<n;i++){
+        let conc='—';
+        if(hasC){
+          conc=sciFmt(c1/Math.pow(g,i));
+        }
+        rows+=row(`标准品 ${i+1}`,conc);
+      }
+      for(let i=0;i<s;i++) rows+=row(`样品 ${i+1}`,'—');
+      for(let i=0;i<ntc;i++) rows+=row(`NTC`,'—');
       const mmWater=mm-mix-pfV-prV-vt-vd;
       out.innerHTML=`
         <div class="result-card">
           <div class="rl">${icon('zap')}<span>共 ${total} 孔（标准品 ${n} + 样品 ${s} + NTC ${ntc}）· 每孔 ${fmtN(V)} µL</span></div>
           <div class="rx">每孔加样：2× Mix ${num2(mix)} + F引物 ${num2(pfV)} + R引物 ${num2(prV)}${vt?` + 探针 ${num2(vt)}`:''}${vd?` + 染料 ${num2(vd)}`:''} + <b>标准品/cDNA ${num2(tpl)}</b> + 无酶水 ${num2(water)} µL。<br>标准品行加入稀释方案第 i 管各 ${num2(tpl)} µL；NTC 孔的模板位置加 ${num2(tpl)} µL 无酶水。</div>
+          ${hasC?`<div class="rx">梯度：1号管 ${sciFmt(c1)} copies/µL，逐管 ${fmtN(g)}× 稀释（各管如何配出来见「标准品 10ⁿ 系列稀释方案」）。各孔所加体积相同，梯度体现在标准品管的浓度上。</div>`:''}
         </div>
         <div class="tbl-wrap"><table class="tbl">
-          <tr><th>孔</th><th>2×Mix(µL)</th><th>F引物</th><th>R引物</th><th>探针</th><th>染料</th><th>标准品/模板</th><th>无酶水</th></tr>
+          <tr><th>孔</th>${hasC?'<th>浓度 copies/µL</th>':''}<th>2×Mix(µL)</th><th>F引物</th><th>R引物</th><th>探针</th><th>染料</th><th>标准品/模板</th><th>无酶水</th></tr>
           ${rows}
         </table></div>
         <div class="info-note" style="margin:0">${icon('info')}<span><b>省力做法（预混液）</b>：按 ${total} 孔 + ${fmtN(ov)}% 余量 = <b>${fmtN(M,3)} 份</b>，每份 ${num2(mm)} µL：2× Mix ${T(mix)} + F引物 ${T(pfV)} + R引物 ${T(prV)}${vt?` + 探针 ${T(vt)}`:''}${vd?` + 染料 ${T(vd)}`:''} + 无酶水 ${T(mmWater)} µL，涡旋混匀后每孔分装 ${num2(mm)} µL，最后各孔分别加入 ${num2(tpl)} µL 对应标准品/样品 cDNA（NTC 加水），封膜离心上机。</span></div>`;
     };
-    this.bind('#pl-n,#pl-s,#pl-ntc,#pl-v,#pl-tpl,#pl-ov,#pl-pf,#pl-ps,#pl-tf,#pl-ts,#pl-df,#pl-ds', p, calcPL);
+    this.bind('#pl-n,#pl-s,#pl-ntc,#pl-v,#pl-tpl,#pl-ov,#pl-pf,#pl-ps,#pl-tf,#pl-ts,#pl-df,#pl-ds,#pl-c1,#pl-g', p, calcPL);
     calcPL();
 
     /* --- ΔΔCq --- */

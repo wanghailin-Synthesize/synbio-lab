@@ -50,6 +50,7 @@ const UI = {
   /* ---------- 通用表单弹层 ----------
      fields: [{k,l,t:'text|number|textarea|date|select|color',o:[],value,ph,unit,req,hint}] */
   formSheet({title, fields, submit='保存', onSubmit, onClose}){
+    const PALETTE=['#2B6BF3','#0FA37F','#7C5CFC','#E8830C','#DC3D43','#0E8FA3','#B85CDB','#5A6B85','#0A6EBD','#D6336C','#C9A227','#8B5E34'];
     const body = fields.map(f=>{
       const v = f.value!=null ? f.value : '';
       let ctl='';
@@ -58,9 +59,12 @@ const UI = {
       }else if(f.t==='textarea'){
         ctl = `<textarea data-k="${f.k}" rows="3" placeholder="${esc(f.ph||'')}">${esc(v)}</textarea>`;
       }else if(f.t==='color'){
-        const palette=['#2B6BF3','#0FA37F','#7C5CFC','#E8830C','#DC3D43','#0E8FA3','#B85CDB','#5A6B85'];
-        ctl = `<div class="chip-row" data-k="${f.k}" data-val="${esc(v||palette[0])}">${palette.map(c=>`
-          <button type="button" class="swatch ${c===(v||palette[0])?'on':''}" style="background:${c}" data-c="${c}"></button>`).join('')}</div>`;
+        /* 色板单独用 div 包裹（不用 label/.ctl），色块样式见 app.css .swatch */
+        const cur = v || PALETTE[0];
+        return `<div class="fld"><span>${esc(f.l)}${f.req?' *':''}</span>
+          <div class="chip-row" data-k="${f.k}" data-val="${esc(cur)}">${PALETTE.map(c=>`
+            <button type="button" class="swatch ${c===cur?'on':''}" style="background:${c}" data-c="${c}" aria-label="${c}"></button>`).join('')}</div>
+          ${f.hint?`<div class="hint">${esc(f.hint)}</div>`:''}</div>`;
       }else if(f.t==='date'){
         ctl = `<input type="date" data-k="${f.k}" value="${escAttr(v)}">`;
       }else{

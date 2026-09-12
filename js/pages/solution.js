@@ -217,14 +217,15 @@ PAGES.solution = {
     if(st.recipeQ) items=items.filter(r=>(r.name+r.cat+(r.items||[]).map(i=>i.n).join('')).toLowerCase().includes(st.recipeQ.toLowerCase()));
     if(!items.length){ list.innerHTML=`<div class="empty">${icon('flask')}<p>没有找到配方</p><span>换个关键词，或点「＋ 自定义」添加</span></div>`; return; }
     list.innerHTML=items.map(r=>{
-      const vol = st.vol[r.id] || 1000;
+      const vol = st.vol[r.id] || r.base || 1000;
       const sc = vol/(r.base||1000);
       const isCustom = !!DB.data.customRecipes.find(x=>x.id===r.id);
       return `<div class="recipe" data-rid="${r.id}">
         <div class="rc-head"><div><h4>${esc(r.name)}</h4><div class="rc-cat"><span class="badge blue">${esc(r.cat)}</span> ${isCustom?'<span class="badge teal">自定义</span>':''}</div></div></div>
         <div class="rc-body">
           <div class="rc-vol"><span class="lb">配制体积</span>
-            <select data-vol="${r.id}">${[100,250,500,1000].map(v=>`<option value="${v}" ${v===vol?'selected':''}>${v} mL</option>`).join('')}</select>
+            <input class="vol-in num" type="number" inputmode="decimal" min="0" step="any" value="${vol}" data-volin="${r.id}" aria-label="配制体积">
+            <span class="lb">mL</span>
           </div>
           <ul class="ing">${(r.items||[]).map(i=>{ const a=fmtAmt((i.a||0)*sc, i.u); return `<li><span>${esc(i.n)}</span><span class="amt">${a.v} ${a.u}</span></li>`; }).join('')}</ul>
           ${r.steps?`<div class="rc-steps"><b>步骤</b>　${esc(r.steps)}</div>`:''}
@@ -236,8 +237,21 @@ PAGES.solution = {
       </div>`;
     }).join('');
 
-    list.querySelectorAll('[data-vol]').forEach(s=>{
-      s.onchange=()=>{ st.vol[s.dataset.vol]=+s.value; this.renderList(list); };
+    /* 体积自由输入：输入即就地重算用量（不整页重渲染，避免失焦） */
+    list.querySelectorAll('[data-volin]').forEach(inp=>{
+      inp.oninput=()=>{
+        const r=this.allRecipes().find(x=>x.id===inp.dataset.volin);
+        if(!r) return;
+        const v=parseFloat(inp.value);
+        if(!(v>0)) return;
+        st.vol[r.id]=v;
+        const sc=v/(r.base||1000);
+        inp.closest('.recipe').querySelectorAll('ul.ing li .amt').forEach((el,i)=>{
+          const it=(r.items||[])[i]; if(!it) return;
+          const a=fmtAmt((it.a||0)*sc, it.u);
+          el.textContent=`${a.v} ${a.u}`;
+        });
+      };
     });
     list.querySelectorAll('[data-editrec]').forEach(b=>b.onclick=()=>{
       this.editRecipe(b.dataset.editrec, ()=>this.renderList(list));
