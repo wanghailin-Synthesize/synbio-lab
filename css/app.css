@@ -316,6 +316,37 @@ input[type=date]{min-height:44px}
 .bx-cell.on{background:var(--primary-soft);border-color:color-mix(in srgb,var(--primary) 32%,transparent);color:var(--primary)}
 .bx-cell:active{transform:scale(.86)}
 
+/* ---------- 96/384 孔板（qPCR 布板） ---------- */
+.plate-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.plate{display:grid;gap:2.5px;margin-top:8px;user-select:none;-webkit-user-select:none}
+.pl-well{aspect-ratio:1;min-width:0;min-height:0;border-radius:4px;border:1px solid var(--border-2);background:var(--surface-2);
+  display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;padding:0;overflow:hidden;
+  line-height:1;transition:transform .1s}
+.pl-well:not(:empty):active{transform:scale(.85)}
+
+/* 布板基因 / 样品管理列表 */
+.bp-add{display:flex;gap:8px;margin-bottom:6px}
+.bp-add .btn{flex-shrink:0}
+.bp-li{display:flex;align-items:center;gap:9px;padding:7px 2px;border-bottom:1px dashed var(--border);font-size:14px}
+.bp-li:last-child{border-bottom:none}
+.bp-li .bpt{flex:1;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bp-li.off .bpt{color:var(--text-3);text-decoration:line-through}
+.bp-dot{width:12px;height:12px;border-radius:4px;flex-shrink:0;display:inline-block}
+.bp-detail{margin:6px 0 12px}
+.bp-detail summary{font-size:14px;font-weight:700;color:var(--primary);cursor:pointer;padding:8px 2px;list-style-position:inside}
+
+/* 布板打印输出（打印时只显示此区块） */
+.bp-printout{display:none;background:#fff;color:#111;padding:14px 16px;font-size:12px}
+.bp-printout h2{font-size:16px;margin:0 0 10px}
+.bp-printout h3{font-size:12.5px;margin:12px 0 4px}
+.bp-printout .plate{gap:1.5px;margin-top:4px}
+.bp-printout .pl-well{border:1px solid #999;border-radius:0;font-size:8px}
+.bp-printout .bx-collab,.bp-printout .bx-rowlab{color:#666;font-weight:700}
+.bp-printout table{border-collapse:collapse;margin:6px 0 10px;width:100%}
+.bp-printout td,.bp-printout th{border:1px solid #bbb;padding:2.5px 6px;font-size:10.5px;text-align:left}
+.bp-printout th{background:#f2f2f2}
+.bp-printout .bp-msg{text-align:right;color:#555;margin-top:12px;font-size:11px}
+
 /* ---------- 计时器 ---------- */
 .timer-card{background:var(--surface);border:1px solid var(--border-2);border-radius:var(--radius);box-shadow:var(--shadow);
   padding:18px;margin-bottom:14px;text-align:center;position:relative;overflow:hidden;transition:background .3s}
@@ -421,6 +452,9 @@ input[type=date]{min-height:44px}
   #app{max-width:none;box-shadow:none}
   .no-print{display:none!important}
   #viewport{padding-bottom:0}
+  /* 布板打印：隐藏应用界面，只显示排板单 */
+  #viewport,#toast-root,.mask,.sheet{display:none!important}
+  .bp-printout{display:block!important}
 }
 
 /* 桌面端微调 */

@@ -1,7 +1,20 @@
-/* 工具箱：序列分析 / 克隆与转化 / 培养计数 / 蛋白定量 / RNA·IVT / 速查表 */
+/* 工具箱：序列分析 / 克隆与转化 / 培养计数 / 蛋白定量 / RNA·IVT / qPCR / 速查表 */
+/* RT 逆转录默认组分（µL/孔，可改；rna:true 的组分不进预混、后加） */
+const RT_DEFAULT = [
+  {n:'5× RT Buffer', v:4},
+  {n:'dNTP（各 10 mM）', v:1},
+  {n:'逆转录酶', v:1},
+  {n:'引物 oligo(dT) / 随机六聚体', v:1},
+  {n:'RNase 抑制剂', v:0.5},
+  {n:'RNA 模板', v:8, rna:true}
+];
+/* 布板基因配色（软底色/深文字，固定色值——打印时也能正常显示） */
+const Q_COLORS = [['#EAF1FE','#2B6BF3'],['#E3F6ED','#0F9D63'],['#FCF1DF','#D97B06'],
+  ['#EFEBFE','#7C5CFC'],['#E2F4F7','#0E8FA3'],['#FCE9EA','#DC3D43']];
+
 PAGES.tools = {
   title:'工具箱',
-  state:{cat:'seq', ivt:null},
+  state:{cat:'seq', ivt:null, qtab:'setup', qctrl:null, rt:null},
 
   CATS:[['seq','序列分析'],['lig','克隆与转化'],['culture','培养与计数'],['protein','蛋白与定量'],['rna','RNA · IVT'],['qpcr','qPCR 定量'],['ref','速查表']],
 
@@ -374,53 +387,157 @@ PAGES.tools = {
     </svg>`;
   },
 
+  /* ---- 统计检验：t / F 分布 p 值（不完全贝塔函数） ---- */
+  logGamma(x){
+    const c=[76.18009172947146,-86.50532032941677,24.01409824083091,-1.231739572450155,0.1208650973866179e-2,-0.5395239384953e-5];
+    let y=x, tmp=x+5.5;
+    tmp-=(x+0.5)*Math.log(tmp);
+    let ser=1.000000000190015;
+    for(let j=0;j<6;j++) ser+=c[j]/++y;
+    return -tmp+Math.log(2.5066282746310005*ser/x);
+  },
+  betacf(a,b,x){
+    const MAXIT=200,EPS=3e-12,FPMIN=1e-300;
+    const qab=a+b,qap=a+1,qam=a-1;
+    let c=1,d=1-qab*x/qap;
+    if(Math.abs(d)<FPMIN)d=FPMIN;
+    d=1/d;let h=d;
+    for(let m=1;m<=MAXIT;m++){
+      const m2=2*m;
+      let aa=m*(b-m)*x/((qam+m2)*(a+m2));
+      d=1+aa*d;if(Math.abs(d)<FPMIN)d=FPMIN;
+      c=1+aa/c;if(Math.abs(c)<FPMIN)c=FPMIN;
+      d=1/d;h*=d*c;
+      aa=-(a+m)*(qab+m)*x/((a+m2)*(qap+m2));
+      d=1+aa*d;if(Math.abs(d)<FPMIN)d=FPMIN;
+      c=1+aa/c;if(Math.abs(c)<FPMIN)c=FPMIN;
+      d=1/d;const del=d*c;h*=del;
+      if(Math.abs(del-1)<EPS)break;
+    }
+    return h;
+  },
+  betai(a,b,x){
+    if(x<=0)return 0;
+    if(x>=1)return 1;
+    const bt=Math.exp(this.logGamma(a+b)-this.logGamma(a)-this.logGamma(b)+a*Math.log(x)+b*Math.log(1-x));
+    return x<(a+1)/(a+b+2)? bt*this.betacf(a,b,x)/a : 1-bt*this.betacf(b,a,1-x)/b;
+  },
+  /* Welch t 检验（双侧 p 值） */
+  tTestWelch(a,b){
+    const n1=a.length,n2=b.length; if(n1<2||n2<2) return null;
+    const m1=a.reduce((s,v)=>s+v,0)/n1, m2=b.reduce((s,v)=>s+v,0)/n2;
+    const v1=a.reduce((s,v)=>s+(v-m1)**2,0)/(n1-1), v2=b.reduce((s,v)=>s+(v-m2)**2,0)/(n2-1);
+    const se=v1/n1+v2/n2; if(se<=0) return null;
+    const t=(m1-m2)/Math.sqrt(se);
+    const df=se*se/(((v1/n1)**2)/(n1-1)+((v2/n2)**2)/(n2-1));
+    if(!isFinite(df)||df<=0) return null;
+    const p=this.betai(df/2,0.5,df/(df+t*t));
+    return {t, df, p};
+  },
+  /* 单因素方差分析 */
+  anova1w(groups){
+    const all=groups.flat(), N=all.length, k=groups.length;
+    if(k<2||N<=k) return null;
+    const gm=all.reduce((s,v)=>s+v,0)/N;
+    const ssb=groups.reduce((s,g)=>{ const m=g.reduce((x,y)=>x+y,0)/g.length; return s+g.length*(m-gm)**2; },0);
+    const ssw=groups.reduce((s,g)=>{ const m=g.reduce((x,y)=>x+y,0)/g.length; return s+g.reduce((x,y)=>x+(y-m)**2,0); },0);
+    const d1=k-1, d2=N-k;
+    if(d2<=0||ssw<=0) return null;
+    const F=(ssb/d1)/(ssw/d2);
+    const p=this.betai(d2/2,d1/2,d2/(d2+d1*F));
+    return {F, df1:d1, df2:d2, p};
+  },
+  sigStars(p){
+    return p<0.0001?'****':p<0.001?'***':p<0.01?'**':p<0.05?'*':'ns';
+  },
+
+  /* ---- qPCR 结果柱状图：fold + 误差线 + 显著性星号 ---- */
+  qBarChart(bars){
+    const W=340,H=212,L=42,R=8,T=16,B=36;
+    const ymax=Math.max(1e-9,...bars.map(b=>Math.max(b.hi||0,b.fold||0)))*1.3;
+    const bw=(W-L-R)/bars.length, barW=Math.min(46,bw*0.6);
+    const Y=v=>T+(1-Math.max(0,v)/ymax)*(H-T-B);
+    let grid='',ytk='';
+    for(let i=0;i<=4;i++){
+      const yv=ymax*i/4, yy=Y(yv);
+      grid+=`<line x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}" stroke="var(--border)" stroke-width="1"/>`;
+      ytk+=`<text x="${L-5}" y="${yy+3.5}" text-anchor="end" font-size="9" fill="var(--text-3)" class="num">${yv>=10?yv.toFixed(0):yv.toFixed(1)}</text>`;
+    }
+    const els=bars.map((b,i)=>{
+      const cx=L+bw*i+bw/2, x0=cx-barW/2;
+      const y0=Y(b.fold), h=Y(0)-y0;
+      const fill=b.ctrl?'var(--text-3)':'var(--primary)';
+      let s=`<rect x="${x0.toFixed(1)}" y="${y0.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(1,h).toFixed(1)}" rx="3" fill="${fill}" ${b.ctrl?'opacity=".45"':''}/>`;
+      s+=`<text x="${cx.toFixed(1)}" y="${(y0-4).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="700" fill="var(--text-2)" class="num">${fmtN(b.fold,3)}</text>`;
+      if(b.hi!=null&&b.lo!=null){
+        s+=`<line x1="${cx.toFixed(1)}" y1="${Y(b.hi).toFixed(1)}" x2="${cx.toFixed(1)}" y2="${Y(b.lo).toFixed(1)}" stroke="var(--text-2)" stroke-width="1.4"/>`;
+        s+=`<line x1="${(cx-4).toFixed(1)}" y1="${Y(b.hi).toFixed(1)}" x2="${(cx+4).toFixed(1)}" y2="${Y(b.hi).toFixed(1)}" stroke="var(--text-2)" stroke-width="1.4"/>`;
+        s+=`<line x1="${(cx-4).toFixed(1)}" y1="${Y(b.lo).toFixed(1)}" x2="${(cx+4).toFixed(1)}" y2="${Y(b.lo).toFixed(1)}" stroke="var(--text-2)" stroke-width="1.4"/>`;
+      }
+      const starY=Y(b.hi!=null?b.hi:b.fold)-10;
+      s+=`<text x="${cx.toFixed(1)}" y="${starY.toFixed(1)}" text-anchor="middle" font-size="11.5" font-weight="800" fill="${(b.star||'ns')==='ns'?'var(--text-3)':'var(--red)'}">${b.star||''}</text>`;
+      const nm=b.name.length>5?b.name.slice(0,5)+'…':b.name;
+      s+=`<text x="${cx.toFixed(1)}" y="${H-B+13}" text-anchor="middle" font-size="9" fill="var(--text-3)">${esc(nm)}</text>`;
+      return s;
+    }).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;margin:6px 0 2px">
+      ${grid}<line x1="${L}" y1="${T}" x2="${L}" y2="${H-B}" stroke="var(--text-3)" stroke-width="1"/>
+      <line x1="${L}" y1="${H-B}" x2="${W-R}" y2="${H-B}" stroke="var(--text-3)" stroke-width="1"/>
+      ${ytk}${els}
+      <text x="${(L+W-R)/2}" y="${H-2}" text-anchor="middle" font-size="9.5" fill="var(--text-3)">相对表达量（对照组 = 1）</text>
+    </svg>`;
+  },
+
+  /* ---- 主入口：加样 / 布板 / 逆转录 / 结果分析 / 拷贝数 ---- */
   gQpcr(p){
+    const st=this.state;
+    if(!st.qtab) st.qtab='setup';
     p.innerHTML=`
-      <div class="chips" style="padding:0 0 10px" id="qg-chips">
-        ${[['all','全部'],['abs','绝对定量'],['rel','相对定量'],['mix','反应体系']].map(t=>`<button class="chip ${t[0]==='all'?'on':''}" data-qg2="${t[0]}">${t[1]}</button>`).join('')}
+      <div class="chips" style="padding:0 0 10px">
+        ${[['setup','🧪 加样'],['plate','🔲 布板'],['rt','🔄 逆转录'],['ana','📊 结果分析'],['copy','🧮 拷贝数']].map(t=>`
+          <button class="chip ${st.qtab===t[0]?'on':''}" data-qt="${t[0]}">${t[1]}</button>`).join('')}
       </div>
-      <div class="info-note">${icon('info')}<span><b>绝对定量</b>：① 配标准品 10ⁿ 梯度 → ② 标准曲线验证效率 → ③ 由样品 Cq 反推拷贝数。<b>相对定量</b>：用 ΔΔCq 或 Pfaffl 直接算倍数变化。</span></div>
-      <div class="card" data-qg="abs">
-        <div class="card-t"><h3>${icon('target')}标准曲线 · 扩增效率</h3></div>
-        <div class="fld"><span>粘贴数据（每行一条：相对浓度, Cq）</span>
-          <div class="ctl"><textarea id="qc-sc" rows="4" placeholder="1, 15.32&#10;0.1, 18.65&#10;0.01, 21.98&#10;0.001, 25.30&#10;0.0001, 28.65" style="font-family:ui-monospace,Menlo,monospace"></textarea></div>
-          <div class="hint">相对浓度＝相对最高浓度标准品的倍数（10× 梯度依次填 1 / 0.1 / 0.01 / 0.001 / 0.0001）；支持逗号、空格、Tab 分隔，可直接从 Excel 粘贴</div>
-        </div>
-        <button class="btn plain small" id="qc-demo">${icon('edit')}填入示例</button>
-        <div id="qc-scout"></div>
-      </div>
+      <div id="q-panel"></div>`;
+    p.querySelectorAll('[data-qt]').forEach(b=>b.onclick=()=>{ st.qtab=b.dataset.qt; this.gQpcr(p); });
+    const box=p.querySelector('#q-panel');
+    ({setup:()=>this.qSetup(box), plate:()=>this.qPlate(box), rt:()=>this.qRT(box),
+      ana:()=>this.qAna(box), copy:()=>this.qCopy(box)})[st.qtab]();
+  },
 
-      <div class="card" data-qg="rel">
-        <div class="card-t"><h3>${icon('sigma')}ΔΔCq 相对定量</h3></div>
+  /* ---- 加样：预混液计算（eq 管多配 · cDNA 后加）+ 标准品稀释 ---- */
+  qSetup(box){
+    box.innerHTML=`
+      <div class="card">
+        <div class="card-t"><h3>${icon('flask')}qPCR 加样 · 预混液计算</h3><span class="badge teal">eq 管多配 · cDNA 后加</span></div>
         <div class="frow">
-          <div class="fld"><span>靶基因 Cq · 处理组</span><div class="ctl"><input id="qc-tt" placeholder="18.2, 18.4, 18.1"></div></div>
-          <div class="fld"><span>靶基因 Cq · 对照组</span><div class="ctl"><input id="qc-tc" placeholder="20.1, 20.0"></div></div>
+          <div class="fld"><span>样品(cDNA)数</span><div class="ctl"><input id="qs-s" type="number" inputmode="numeric" value="4"></div></div>
+          <div class="fld"><span>技术重复</span><div class="ctl"><input id="qs-r" type="number" inputmode="numeric" value="3"></div></div>
+          <div class="fld"><span>NTC 孔/引物对</span><div class="ctl"><input id="qs-ntc" type="number" inputmode="numeric" value="1"></div></div>
         </div>
         <div class="frow">
-          <div class="fld"><span>内参基因 Cq · 处理组</span><div class="ctl"><input id="qc-rt" placeholder="15.3, 15.4"></div></div>
-          <div class="fld"><span>内参基因 Cq · 对照组</span><div class="ctl"><input id="qc-rc" placeholder="15.5"></div></div>
+          <div class="fld"><span>多配孔数</span><div class="ctl"><input id="qs-eq" type="number" inputmode="numeric" value="1"></div></div>
+          <div class="fld"><span>引物对(基因)数</span><div class="ctl"><input id="qs-g" type="number" inputmode="numeric" value="2"></div></div>
+          <div class="fld"><span>总体积/孔</span><div class="ctl"><input id="qs-v" type="number" inputmode="decimal" value="20"><span class="u">µL</span></div></div>
         </div>
-        <div id="qc-ddout"></div>
+        <div class="frow">
+          <div class="fld"><span>2× Mix / 孔</span><div class="ctl"><input id="qs-mix" type="number" inputmode="decimal" value="10"><span class="u">µL</span></div></div>
+          <div class="fld"><span>cDNA / 孔</span><div class="ctl"><input id="qs-tpl" type="number" inputmode="decimal" value="2"><span class="u">µL</span></div></div>
+          <div class="fld"><span>引物终浓度</span><div class="ctl"><input id="qs-pf" type="number" inputmode="decimal" value="0.3"><span class="u">µM</span></div></div>
+        </div>
+        <div class="frow">
+          <div class="fld"><span>引物母液</span><div class="ctl"><input id="qs-ps" type="number" inputmode="decimal" value="10"><span class="u">µM</span></div></div>
+          <div class="fld"><span>探针终浓度(0=SYBR)</span><div class="ctl"><input id="qs-tf" type="number" inputmode="decimal" value="0"><span class="u">µM</span></div></div>
+          <div class="fld"><span>探针母液</span><div class="ctl"><input id="qs-ts" type="number" inputmode="decimal" value="10"><span class="u">µM</span></div></div>
+        </div>
+        <div class="frow">
+          <div class="fld"><span>染料终浓度(ROX)</span><div class="ctl"><input id="qs-df" type="number" inputmode="decimal" value="0"><span class="u">µM</span></div></div>
+          <div class="fld"><span>染料母液</span><div class="ctl"><input id="qs-ds" type="number" inputmode="decimal" value="25"><span class="u">µM</span></div></div>
+        </div>
+        <div id="qs-out"></div>
       </div>
+      <div class="info-note">${icon('info')}<span><b>省力做法</b>：同一引物对的所有孔共用一管预混（不含 cDNA），按「真实孔数 + NTC + 多配」配制；cDNA/标准品最后逐孔单独加，NTC 加水。每个引物对各配一管。</span></div>
 
-      <div class="card" data-qg="rel">
-        <div class="card-t"><h3>${icon('sigma')}Pfaffl 效率校正相对定量</h3></div>
-        <div class="frow">
-          <div class="fld"><span>靶 Cq · 处理组</span><div class="ctl"><input id="qf-tt"></div></div>
-          <div class="fld"><span>靶 Cq · 对照组</span><div class="ctl"><input id="qf-tc"></div></div>
-        </div>
-        <div class="frow">
-          <div class="fld"><span>内参 Cq · 处理组</span><div class="ctl"><input id="qf-rt"></div></div>
-          <div class="fld"><span>内参 Cq · 对照组</span><div class="ctl"><input id="qf-rc"></div></div>
-        </div>
-        <div class="frow">
-          <div class="fld"><span>靶基因扩增系数</span><div class="ctl"><input id="qf-et" type="number" inputmode="decimal" value="2.0"><span class="u">倍/循环</span></div></div>
-          <div class="fld"><span>内参扩增系数</span><div class="ctl"><input id="qf-er" type="number" inputmode="decimal" value="2.0"><span class="u">倍/循环</span></div></div>
-        </div>
-        <div id="qf-out"></div>
-      </div>
-
-      <div class="card" data-qg="abs">
+      <div class="card">
         <div class="card-t"><h3>${icon('list')}标准品 10ⁿ 系列稀释方案</h3><span class="badge teal">梯度制备</span></div>
         <div class="frow">
           <div class="fld"><span>母液浓度</span><div class="ctl"><input id="sd-c0" type="number" inputmode="decimal" placeholder="如 1"><span class="u" id="sd-u0">copies/µL</span></div></div>
@@ -434,118 +551,53 @@ PAGES.tools = {
         </div>
         <label class="fld" style="display:flex;align-items:center;gap:9px;font-size:14px;font-weight:600;color:var(--text)"><input type="checkbox" id="sd-first" checked style="width:18px;height:18px;accent-color:var(--primary)">最高浓度管直接用母液</label>
         <div id="sd-out"></div>
-      </div>
+      </div>`;
 
-      <div class="card" data-qg="abs">
-        <div class="card-t"><h3>${icon('vial')}上板方案 · 各孔加样表</h3><span class="badge teal">绝对定量</span></div>
-        <div class="frow">
-          <div class="fld"><span>标准品管数</span><div class="ctl"><input id="pl-n" type="number" inputmode="numeric" value="8"></div></div>
-          <div class="fld"><span>样品孔数(含重复)</span><div class="ctl"><input id="pl-s" type="number" inputmode="numeric" value="6"></div></div>
-          <div class="fld"><span>NTC 孔数</span><div class="ctl"><input id="pl-ntc" type="number" inputmode="numeric" value="1"></div></div>
-        </div>
-        <div class="frow">
-          <div class="fld"><span>总体积/孔</span><div class="ctl"><input id="pl-v" type="number" inputmode="decimal" value="20"><span class="u">µL</span></div></div>
-          <div class="fld"><span>标准品·模板/孔</span><div class="ctl"><input id="pl-tpl" type="number" inputmode="decimal" value="2"><span class="u">µL</span></div></div>
-          <div class="fld"><span>配液余量</span><div class="ctl"><input id="pl-ov" type="number" inputmode="decimal" value="10"><span class="u">%</span></div></div>
-        </div>
-        <div class="frow">
-          <div class="fld"><span>引物终浓度</span><div class="ctl"><input id="pl-pf" type="number" inputmode="decimal" value="0.3"><span class="u">µM</span></div></div>
-          <div class="fld"><span>引物母液</span><div class="ctl"><input id="pl-ps" type="number" inputmode="decimal" value="10"><span class="u">µM</span></div></div>
-          <div class="fld"><span>探针终浓度</span><div class="ctl"><input id="pl-tf" type="number" inputmode="decimal" value="0.25"><span class="u">µM</span></div></div>
-        </div>
-        <div class="frow">
-          <div class="fld"><span>探针母液</span><div class="ctl"><input id="pl-ts" type="number" inputmode="decimal" value="10"><span class="u">µM</span></div></div>
-          <div class="fld"><span>染料终浓度</span><div class="ctl"><input id="pl-df" type="number" inputmode="decimal" value="0"><span class="u">µM</span></div></div>
-          <div class="fld"><span>染料母液</span><div class="ctl"><input id="pl-ds" type="number" inputmode="decimal" value="25"><span class="u">µM</span></div></div>
-        </div>
-        <div class="frow">
-          <div class="fld"><span>1号标准品浓度(选填)</span><div class="ctl"><input id="pl-c1" type="number" inputmode="decimal" placeholder="填了显示梯度列"><span class="u">copies/µL</span></div></div>
-          <div class="fld"><span>梯度倍数</span><div class="ctl"><input id="pl-g" type="number" inputmode="decimal" value="10"><span class="u">倍</span></div></div>
-        </div>
-        <div id="pl-out"></div>
-      </div>
-
-      <div class="card" data-qg="abs">
-        <div class="card-t"><h3>${icon('dna')}拷贝数换算</h3></div>
-        <div class="frow">
-          <div class="fld"><span>质量</span><div class="ctl"><input id="cn-ng" type="number" inputmode="decimal" placeholder="如 1"><span class="u">ng</span></div></div>
-          <div class="fld"><span>片段长度</span><div class="ctl"><input id="cn-bp" type="number" inputmode="decimal" placeholder="bp"><span class="u">bp</span></div></div>
-          <div class="fld"><span>类型</span><div class="ctl"><select id="cn-ty"><option value="660">dsDNA</option><option value="330">ssDNA</option><option value="340">ssRNA</option></select></div></div>
-        </div>
-        <div class="fld"><span>稀释总体积（选填）</span><div class="ctl"><input id="cn-v" type="number" inputmode="decimal" placeholder="如 100"><span class="u">µL</span></div></div>
-        <div id="cn-out1"></div>
-        <div class="sec-gap"></div>
-        <div class="frow">
-          <div class="fld"><span>标准曲线斜率 m</span><div class="ctl"><input id="ca-m" type="number" inputmode="decimal" placeholder="如 -3.32"></div></div>
-          <div class="fld"><span>截距 b</span><div class="ctl"><input id="ca-b" type="number" inputmode="decimal" placeholder="如 36.8"></div></div>
-        </div>
-        <div class="frow">
-          <div class="fld"><span>样品 Cq</span><div class="ctl"><input id="ca-cq" type="number" inputmode="decimal"></div></div>
-          <div class="fld"><span>上样前稀释倍数</span><div class="ctl"><input id="ca-d" type="number" inputmode="decimal" value="1"></div></div>
-        </div>
-        <div id="cn-out2"></div>
-      </div>
-
-      <div class="card" data-qg="mix">
-        <div class="card-t"><h3>${icon('flask')}qPCR 反应体系</h3><span class="badge teal">SYBR / 探针 / 染料</span></div>
-        <div class="frow">
-          <div class="fld"><span>总体积</span><div class="ctl"><input id="qm-v" type="number" inputmode="decimal" value="20"><span class="u">µL</span></div></div>
-          <div class="fld"><span>引物终浓度</span><div class="ctl"><input id="qm-pf" type="number" inputmode="decimal" value="0.3"><span class="u">µM</span></div></div>
-          <div class="fld"><span>引物母液</span><div class="ctl"><input id="qm-ps" type="number" inputmode="decimal" value="10"><span class="u">µM</span></div></div>
-        </div>
-        <div class="frow">
-          <div class="fld"><span>探针终浓度</span><div class="ctl"><input id="qm-tf" type="number" inputmode="decimal" value="0.25"><span class="u">µM</span></div></div>
-          <div class="fld"><span>探针母液</span><div class="ctl"><input id="qm-ts" type="number" inputmode="decimal" value="10"><span class="u">µM</span></div></div>
-          <div class="fld"><span>cDNA 模板</span><div class="ctl"><input id="qm-tpl" type="number" inputmode="decimal" value="2"><span class="u">µL</span></div></div>
-        </div>
-        <div class="frow">
-          <div class="fld"><span>染料终浓度（ROX 等）</span><div class="ctl"><input id="qm-df" type="number" inputmode="decimal" value="0"><span class="u">µM</span></div></div>
-          <div class="fld"><span>染料母液</span><div class="ctl"><input id="qm-ds" type="number" inputmode="decimal" value="25"><span class="u">µM</span></div></div>
-          <div class="fld"><span>模板预稀释</span><div class="ctl"><input id="qm-dil" type="number" inputmode="decimal" value="1"><span class="u">倍</span></div></div>
-        </div>
-        <div id="qm-out"></div>
-      </div>
-      <div class="info-note">${icon('info')}<span>MIQE 指南建议：扩增效率 90–110%、R²≥0.99、熔解曲线单峰；SYBR 体系引物终浓度常用 0.2–0.4 µM，探针 0.1–0.25 µM。</span></div>`;
-
-    /* --- 标准曲线 --- */
-    const calcSC=()=>{
-      const out=p.querySelector('#qc-scout');
-      const pts=[];
-      p.querySelector('#qc-sc').value.split(/\n+/).forEach(line=>{
-        const nums=(line.match(/-?\d*\.?\d+(?:e[+-]?\d+)?/gi)||[]).map(Number);
-        if(nums.length>=2 && nums[0]>0 && isFinite(nums[1])) pts.push({x:Math.log10(nums[0]), y:nums[1]});
-      });
-      if(pts.length<2){ out.innerHTML=''; return; }
-      const fit=this.linreg(pts);
-      if(!fit || fit.m>=0){ out.innerHTML=`<div class="warn-note" style="margin:0">${icon('alert')}<span>至少需要 2 行有效数据，且斜率应为负值（浓度越高 Cq 越小）。请检查输入。</span></div>`; return; }
-      const E=Math.pow(10,-1/fit.m)-1, pct=E*100;
-      const verdict = (pct>=90&&pct<=110&&fit.r2>=0.99)? '<span class="badge green">优秀，可用于定量</span>'
-        : (pct>=80&&pct<=120&&fit.r2>=0.98)? '<span class="badge orange">基本合格，建议优化</span>'
-        : '<span class="badge red">不合格，需重新设计/优化</span>';
-      const amp = Math.pow(10,-1/fit.m);
-      const rows=pts.map(q=>`<tr><td class="num">${fmtN(Math.pow(10,q.x),3)}</td><td class="num">${q.y.toFixed(2)}</td><td class="num">${(fit.m*q.x+fit.b).toFixed(2)}</td><td class="num" style="color:var(--text-3)">${(q.y-(fit.m*q.x+fit.b)>=0?'+':'')+(q.y-(fit.m*q.x+fit.b)).toFixed(2)}</td></tr>`).join('');
+    /* --- 预混液 --- */
+    const calcQS=()=>{
+      const out=box.querySelector('#qs-out');
+      const S=getNum('#qs-s'), R=getNum('#qs-r'), ntc=getNum('#qs-ntc')||0, eq=getNum('#qs-eq')||0;
+      const G=getNum('#qs-g')||1, V=getNum('#qs-v'), tpl=getNum('#qs-tpl')||0, mix=getNum('#qs-mix');
+      const pf=getNum('#qs-pf'), ps=getNum('#qs-ps');
+      const tf=getNum('#qs-tf')||0, ts=getNum('#qs-ts')||10;
+      const df=getNum('#qs-df')||0, ds=getNum('#qs-ds')||25;
+      if([S,R,V,mix,pf,ps].some(isNaN)||S<1||R<1||V<=0||mix<=0||V>2000){ out.innerHTML=''; return; }
+      const pfV=pf*V/ps, prV=pf*V/ps;
+      const vt=(tf>0&&ts>0)? tf*V/ts : 0;
+      const vd=(df>0&&ds>0)? df*V/ds : 0;
+      const water=V-mix-pfV-prV-vt-vd-tpl;
+      if(water<0){ out.innerHTML=`<div class="warn-note" style="margin:0">${icon('alert')}<span>各组分体积已超过每孔总体积 ${fmtN(V)} µL，请调整。</span></div>`; return; }
+      const rxns=S*R+ntc, parts=rxns+eq, mm=V-tpl, mmWater=mm-mix-pfV-prV-vt-vd;
+      const T2=x=>fmtN(x*parts,3), A2=x=>fmtN(x*parts*G,3);
+      const row=(n,v,cls)=>`<tr><td style="white-space:nowrap">${n}</td><td class="num" style="text-align:right">${fmtN(v,3)}</td><td class="num" style="text-align:right">${T2(v)}</td><td class="num" style="text-align:right;font-weight:${cls?800:400};color:${cls?'var(--primary)':'inherit'}">${A2(v)}</td></tr>`;
       out.innerHTML=`
         <div class="result-card">
-          <div class="rl">${icon('zap')}<span>扩增效率 E</span></div>
-          <div class="rv num">${pct.toFixed(1)}<small>%</small></div>
-          <div class="rx">斜率 <b>${fit.m.toFixed(3)}</b> · 截距 <b>${fit.b.toFixed(2)}</b> · R² <b>${fit.r2.toFixed(4)}</b> · 每循环扩增 ${amp.toFixed(2)} 倍 ${verdict}</div>
+          <div class="rl">${icon('zap')}<span>每引物对预混液（不含 cDNA）</span></div>
+          <div class="rv num">${fmtN(mm*parts,4)}<small>µL</small></div>
+          <div class="rx">${parts} 份 × 每份 ${fmtN(mm,3)} µL（真实孔 ${S}×${R}=${S*R} + NTC ${ntc} + 多配 ${eq}）。分装 ${fmtN(mm,3)} µL/孔后，各孔加 cDNA ${fmtN(tpl,3)} µL；全部 ${G} 对引物共需 cDNA ${fmtN(tpl*S*R*G,3)} µL（NTC 加水，不加多配）。</div>
         </div>
-        ${this.qcChart(pts,fit)}
-        <div class="tbl-wrap"><table class="tbl"><tr><th>相对浓度</th><th>实测 Cq</th><th>拟合 Cq</th><th>残差</th></tr>${rows}</table></div>`;
+        <div class="tbl-wrap"><table class="tbl">
+          <tr><th>组分</th><th style="text-align:right">单孔 µL</th><th style="text-align:right">每引物对</th><th style="text-align:right">${fmtN(G)} 对合计</th></tr>
+          ${row('2× Mix',mix)}
+          ${row('F 引物',pfV)}${row('R 引物',prV)}
+          ${vt?row('探针',vt):''}${vd?row('染料 ROX',vd):''}
+          ${row('无酶水',mmWater)}
+          <tr><td style="font-weight:800">预混合计</td><td class="num" style="text-align:right;font-weight:800">${fmtN(mm,3)}</td><td class="num" style="text-align:right;font-weight:800;color:var(--primary)">${T2(mm)}</td><td class="num" style="text-align:right;font-weight:800;color:var(--primary)">${A2(mm)}</td></tr>
+          ${row('cDNA（后加）',tpl)}
+        </table></div>
+        <button class="btn plain small" id="qs-cp" style="margin-top:2px">${icon('copy')}复制加样方案</button>`;
+      box.querySelector('#qs-cp').onclick=()=>UI.copy(
+        `qPCR每孔(共${V}µL)：2×Mix ${fmtN(mix,3)} + F引物 ${fmtN(pfV,3)} + R引物 ${fmtN(prV,3)}${vt?` + 探针 ${fmtN(vt,3)}`:''}${vd?` + ROX ${fmtN(vd,3)}`:''} + cDNA ${fmtN(tpl,3)} + 水 ${fmtN(water,3)} µL；每引物对预混（不含cDNA）${parts}份×${fmtN(mm,3)}µL=${fmtN(mm*parts,4)}µL，cDNA后加`);
     };
-    this.bind('#qc-sc', p, calcSC);
-    p.querySelector('#qc-demo').onclick=()=>{
-      p.querySelector('#qc-sc').value='1, 15.32\n0.1, 18.65\n0.01, 21.98\n0.001, 25.30\n0.0001, 28.65';
-      calcSC();
-    };
+    this.bind('#qs-s,#qs-r,#qs-ntc,#qs-eq,#qs-g,#qs-v,#qs-mix,#qs-tpl,#qs-pf,#qs-ps,#qs-tf,#qs-ts,#qs-df,#qs-ds', box, calcQS);
 
-    /* --- 标准品 10ⁿ 系列稀释方案 --- */
+    /* --- 标准品 10ⁿ 系列稀释 --- */
     const calcSD=()=>{
-      const out=p.querySelector('#sd-out');
-      const c0=getNum('#sd-c0'), unit=p.querySelector('#sd-unit').value;
+      const out=box.querySelector('#sd-out');
+      const c0=getNum('#sd-c0'), unit=box.querySelector('#sd-unit').value;
       const f=getNum('#sd-f'), n=getNum('#sd-n'), V=getNum('#sd-v'), bp=getNum('#sd-bp');
-      p.querySelector('#sd-u0').textContent = unit==='ng'?'ng/µL':'copies/µL';
-      p.querySelector('#sd-bp-f').style.display = unit==='ng'?'':'none';
+      box.querySelector('#sd-u0').textContent = unit==='ng'?'ng/µL':'copies/µL';
+      box.querySelector('#sd-bp-f').style.display = unit==='ng'?'':'none';
       if(isNaN(c0)||c0<=0||isNaN(f)||f<=1||isNaN(n)||n<1||n>15||isNaN(V)||V<=0){ out.innerHTML=''; return; }
       let c0cp=c0, uNote='';
       if(unit==='ng'){
@@ -553,7 +605,7 @@ PAGES.tools = {
         c0cp=c0*1e-9*6.022e23/(bp*660);
         uNote=`<br>母液换算：${fmtN(c0)} ng/µL × ${fmtN(bp)} bp ≈ ${sciFmt(c0cp)} copies/µL`;
       }
-      const useStock=p.querySelector('#sd-first').checked;
+      const useStock=box.querySelector('#sd-first').checked;
       const c1=useStock? c0cp : c0cp/f;
       const take=V/f;
       const SUP='⁰¹²³⁴⁵⁶⁷⁸⁹';
@@ -575,94 +627,565 @@ PAGES.tools = {
         </div>
         <div class="tbl-wrap"><table class="tbl"><tr><th>管号</th><th>浓度 copies/µL</th><th>操作</th></tr>${rows.join('')}</table></div>${tinyWarn}`;
     };
-    this.bind('#sd-c0,#sd-unit,#sd-bp,#sd-f,#sd-n,#sd-v', p, calcSD);
-    p.querySelector('#sd-first').addEventListener('change', calcSD);
+    this.bind('#sd-c0,#sd-unit,#sd-bp,#sd-f,#sd-n,#sd-v', box, calcSD);
+    box.querySelector('#sd-first').addEventListener('change', calcSD);
     calcSD();
+  },
 
-    /* --- 上板方案：逐孔加样表 + 预混液 --- */
-    const calcPL=()=>{
-      const out=p.querySelector('#pl-out');
-      const n=getNum('#pl-n'), s=getNum('#pl-s'), ntc=getNum('#pl-ntc');
-      const V=getNum('#pl-v'), tpl=getNum('#pl-tpl'), ov=getNum('#pl-ov');
-      const pf=getNum('#pl-pf'), ps=getNum('#pl-ps');
-      const tf=getNum('#pl-tf'), ts=getNum('#pl-ts');
-      const df=getNum('#pl-df')||0, ds=getNum('#pl-ds')||25;
-      const c1=getNum('#pl-c1'), g=getNum('#pl-g')||10;
-      const hasC=!isNaN(c1)&&c1>0;
-      if([n,s,ntc,V,tpl,ov,pf,ps].some(isNaN)||n<1||s<0||ntc<0||V<=0||tpl<0||ov<0){ out.innerHTML=''; return; }
-      const mix=V/2, pfV=pf*V/ps, prV=pf*V/ps;
-      const vt=(tf>0&&ts>0)? tf*V/ts : 0, vd=(df>0&&ds>0)? df*V/ds : 0;
-      const water=V-mix-pfV-prV-vt-vd-tpl;
-      if(water<0){ out.innerHTML=`<div class="warn-note" style="margin:0">${icon('alert')}<span>各组分体积已超过每孔总体积 ${fmtN(V)} µL，请调整。</span></div>`; return; }
-      const total=n+s+ntc, M=total*(1+ov/100);
-      const mm=V-tpl; /* 每孔预混液体积 */
-      const T=x=>fmtN(x*M,3);
-      const num2=x=>fmtN(x,2);
-      const SUP2='⁰¹²³⁴⁵⁶⁷⁸⁹';
-      const supN2=k=>'10'+String(k).replace('-','⁻').replace(/\d/g,d=>SUP2[+d]);
-      const row=(name,concHtml)=>`<tr><td style="white-space:nowrap">${name}</td>${hasC?`<td class="num" style="white-space:nowrap">${concHtml}</td>`:''}<td class="num">${num2(mix)}</td><td class="num">${num2(pfV)}</td><td class="num">${num2(prV)}</td><td class="num">${vt?num2(vt):'—'}</td><td class="num">${vd?num2(vd):'—'}</td><td class="num" style="font-weight:700;color:var(--primary)">${num2(tpl)}</td><td class="num">${num2(water)}</td></tr>`;
-      let rows='';
-      for(let i=0;i<n;i++){
-        let conc='—';
-        if(hasC){
-          conc=sciFmt(c1/Math.pow(g,i));
-        }
-        rows+=row(`标准品 ${i+1}`,conc);
+  /* ---- 布板：96/384 孔自动排板（基因不跨板 · 重复不跨行 · 方案可保存） ---- */
+  qPlate(box){
+    const st=this.state;
+    if(!st.bp) st.bp={ genes:[{n:'内参基因',ref:1},{n:'目的基因 1'},{n:'目的基因 2'}],
+      samples:['对照 1','对照 2','对照 3','处理 1','处理 2','处理 3'].map(n=>({n,on:1})),
+      R:3, ntc:1, eq:1, dir:'s', size:'96', vMix:10, vPrimer:0.6, vCdna:2, vWater:6.8, msg:'' };
+    const b=st.bp;
+    const SIZES={'96':{rows:8,cols:12,label:'96 孔 (8×12)'},'384':{rows:16,cols:24,label:'384 孔 (16×24)'}};
+    const chunk=(arr,size)=>{ const o=[]; for(let i=0;i<arr.length;i+=size) o.push(arr.slice(i,i+size)); return o; };
+
+    box.innerHTML=`
+      <div class="card">
+        <div class="card-t"><h3>${icon('dna')}基因 / 引物对</h3><span class="badge gray" id="bp-gcount"></span></div>
+        <div class="bp-add"><div class="ctl" style="flex:1"><input id="bp-gin" placeholder="基因名，回车添加"></div><button class="btn primary small" id="bp-gadd">${icon('plus')}添加</button></div>
+        <div id="bp-glist"></div>
+        <div class="hint" style="font-size:12px;color:var(--text-3);margin-top:8px" id="bp-gwarn"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-t"><h3>${icon('vial')}样品 / cDNA 组别</h3>
+          <div style="display:flex;gap:6px"><button class="btn plain small" id="bp-sall">全选</button><button class="btn plain small" id="bp-snone">全不选</button></div></div>
+        <div class="bp-add"><div class="ctl" style="flex:1"><input id="bp-sin" placeholder="样品名，回车添加"></div><button class="btn primary small" id="bp-sadd">${icon('plus')}添加</button></div>
+        <div id="bp-slist"></div>
+        <div class="hint" style="font-size:12px;color:var(--text-3);margin-top:8px">取消勾选的组别不参与排板，但保留在名单里。</div>
+      </div>
+
+      <div class="card">
+        <div class="card-t"><h3>${icon('sliders')}排板设置</h3></div>
+        <div class="frow">
+          <div class="fld"><span>技术重复</span><div class="ctl"><input id="bp-r" type="number" inputmode="numeric" value="${b.R}"></div></div>
+          <div class="fld"><span>NTC / 基因</span><div class="ctl"><input id="bp-ntc" type="number" inputmode="numeric" value="${b.ntc}"></div></div>
+          <div class="fld"><span>多配孔数</span><div class="ctl"><input id="bp-eq" type="number" inputmode="numeric" value="${b.eq}"></div></div>
+        </div>
+        <div class="frow">
+          <div class="fld"><span>排布方向</span><div class="ctl"><select id="bp-dir">
+            <option value="s" ${b.dir==='s'?'selected':''}>行=样品 列=基因</option>
+            <option value="g" ${b.dir==='g'?'selected':''}>行=基因 列=样品</option></select></div></div>
+          <div class="fld"><span>板规格</span><div class="ctl"><select id="bp-size">
+            <option value="96" ${b.size==='96'?'selected':''}>96 孔 (8×12)</option>
+            <option value="384" ${b.size==='384'?'selected':''}>384 孔 (16×24)</option></select></div></div>
+        </div>
+        <div class="frow">
+          <div class="fld"><span>2× Mix µL/孔</span><div class="ctl"><input id="bp-vmix" type="number" inputmode="decimal" value="${b.vMix}"></div></div>
+          <div class="fld"><span>总引物 µL/孔</span><div class="ctl"><input id="bp-vprimer" type="number" inputmode="decimal" value="${b.vPrimer}"></div></div>
+        </div>
+        <div class="frow">
+          <div class="fld"><span>cDNA µL/孔</span><div class="ctl"><input id="bp-vcda" type="number" inputmode="decimal" value="${b.vCdna}"></div></div>
+          <div class="fld"><span>H₂O µL/孔</span><div class="ctl"><input id="bp-vwater" type="number" inputmode="decimal" value="${b.vWater}"></div></div>
+        </div>
+        <div class="fld"><span>打印留言（显示在打印页右下角，选填）</span><div class="ctl"><input id="bp-msg" value="${escAttr(b.msg||'')}" placeholder="如 2026-09-13 qPCR 第 2 批"></div></div>
+        <div class="hint" style="font-size:12px;color:var(--text-3)">排板规则：重复紧邻不跨行；基因装不下时整块移到下一块板（基因不跨板）。点孔位可查看内容。</div>
+      </div>
+
+      <div id="bp-out"></div>
+
+      <div class="card">
+        <div class="card-t"><h3>${icon('download')}方案保存</h3></div>
+        <div class="bp-add"><div class="ctl" style="flex:1"><input id="bp-savein" placeholder="方案名称，如 T7 表达第3批"></div><button class="btn primary small" id="bp-save">${icon('check')}保存</button></div>
+        <div id="bp-saves"></div>
+      </div>`;
+
+    /* --- 基因列表 --- */
+    const drawGenes=()=>{
+      box.querySelector('#bp-gcount').textContent=`${b.genes.length} 个`;
+      const refGene=b.genes.find(g=>g.ref);
+      box.querySelector('#bp-gwarn').innerHTML = !b.genes.length
+        ? '请至少添加一个基因'
+        : !refGene
+        ? '⚠ <b style="color:var(--orange)">尚未设置内参基因</b>——相对定量必须有内参，点基因行的「设为内参」'
+        : `内参基因：${esc(refGene.n)}`;
+      box.querySelector('#bp-glist').innerHTML = b.genes.map((g,i)=>`
+        <div class="bp-li">
+          <span class="bp-dot" style="background:${Q_COLORS[i%Q_COLORS.length][0]};border:1.5px solid ${Q_COLORS[i%Q_COLORS.length][1]}"></span>
+          <span class="bpt">${esc(g.n)}${g.ref?' <span class="badge blue">内参</span>':''}</span>
+          ${g.ref?'':`<button class="btn plain small" data-gref="${i}">设为内参</button>`}
+          <button class="icon-btn" style="width:30px;height:30px" data-gdel="${i}">${icon('x')}</button>
+        </div>`).join('');
+      box.querySelectorAll('[data-gref]').forEach(btn=>btn.onclick=()=>{
+        b.genes.forEach(g=>g.ref=0); b.genes[+btn.dataset.gref].ref=1; drawGenes(); drawResult();
+      });
+      box.querySelectorAll('[data-gdel]').forEach(btn=>btn.onclick=()=>{
+        b.genes.splice(+btn.dataset.gdel,1); drawGenes(); drawResult();
+      });
+    };
+    const addGene=()=>{
+      const inp=box.querySelector('#bp-gin'); const v=inp.value.trim();
+      if(!v){ return; }
+      b.genes.push({n:v,ref:b.genes.length?0:1}); inp.value=''; drawGenes(); drawResult();
+    };
+    box.querySelector('#bp-gadd').onclick=addGene;
+    box.querySelector('#bp-gin').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); addGene(); } });
+
+    /* --- 样品列表 --- */
+    const drawSamples=()=>{
+      box.querySelector('#bp-slist').innerHTML = b.samples.map((s,i)=>`
+        <div class="bp-li ${s.on?'':'off'}">
+          <button class="ckx ${s.on?'on':''}" data-son="${i}">${icon('check')}</button>
+          <span class="bpt">${esc(s.n)}</span>
+          <button class="icon-btn" style="width:30px;height:30px" data-sdel="${i}">${icon('x')}</button>
+        </div>`).join('');
+      box.querySelectorAll('[data-son]').forEach(btn=>btn.onclick=()=>{
+        const s=b.samples[+btn.dataset.son]; s.on=s.on?0:1; drawSamples(); drawResult();
+      });
+      box.querySelectorAll('[data-sdel]').forEach(btn=>btn.onclick=()=>{
+        b.samples.splice(+btn.dataset.sdel,1); drawSamples(); drawResult();
+      });
+    };
+    const addSample=()=>{
+      const inp=box.querySelector('#bp-sin'); const v=inp.value.trim();
+      if(!v){ return; }
+      b.samples.push({n:v,on:1}); inp.value=''; drawSamples(); drawResult();
+    };
+    box.querySelector('#bp-sadd').onclick=addSample;
+    box.querySelector('#bp-sin').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); addSample(); } });
+    box.querySelector('#bp-sall').onclick=()=>{ b.samples.forEach(s=>s.on=1); drawSamples(); drawResult(); };
+    box.querySelector('#bp-snone').onclick=()=>{ b.samples.forEach(s=>s.on=0); drawSamples(); drawResult(); };
+
+    /* --- 设置 --- */
+    const readSet=()=>{
+      b.R=Math.max(1,Math.round(getNum('#bp-r')||3));
+      b.ntc=Math.max(0,Math.round(getNum('#bp-ntc')||0));
+      b.eq=Math.max(0,Math.round(getNum('#bp-eq')||0));
+      b.dir=box.querySelector('#bp-dir').value;
+      b.size=box.querySelector('#bp-size').value;
+      b.vMix=getNum('#bp-vmix')||0; b.vPrimer=getNum('#bp-vprimer')||0;
+      b.vCdna=getNum('#bp-vcda')||0; b.vWater=getNum('#bp-vwater')||0;
+      b.msg=box.querySelector('#bp-msg').value.trim();
+    };
+
+    /* --- 排板 --- */
+    const layout=()=>{
+      const dim=SIZES[b.size], span=b.R+b.ntc;
+      const genes=b.genes.map(g=>g.n);
+      const active=b.samples.filter(s=>s.on).map(s=>s.n);
+      const perGenes = b.dir==='s'? Math.max(1,Math.floor(dim.cols/span)) : Math.max(1,Math.floor(dim.rows/span));
+      const bandSize = b.dir==='s'? dim.rows : dim.cols;
+      const plates=[];
+      chunk(genes,perGenes).forEach(gc=>{
+        chunk(active,bandSize).forEach(band=>{
+          const pl={cells:{},chunk:gc,band};
+          if(b.dir==='s'){
+            let col=0;
+            gc.forEach(g=>{ band.forEach((sm,si)=>{ for(let k=0;k<span;k++) pl.cells[si+'-'+(col+k)]={g,sm,gi:genes.indexOf(g),type:k>=b.R?'NTC':`重复${k+1}`,pos:si+'-'+(col+k)}; }); col+=span; });
+          }else{
+            let row=0;
+            gc.forEach(g=>{ band.forEach((sm,si)=>{ for(let k=0;k<span;k++) pl.cells[(row+k)+'-'+si]={g,sm,gi:genes.indexOf(g),type:k>=b.R?'NTC':`重复${k+1}`,pos:(row+k)+'-'+si}; }); row+=span; });
+          }
+          plates.push(pl);
+        });
+      });
+      return {plates, genes, active, dim, span};
+    };
+    const wellName=(r,c)=>String.fromCharCode(65+r)+(c+1);
+
+    const drawResult=()=>{
+      const out=box.querySelector('#bp-out');
+      readSet();
+      const dim=SIZES[b.size], span=b.R+b.ntc;
+      if(!b.genes.length || !b.samples.some(s=>s.on)){
+        out.innerHTML=`<div class="warn-note" style="margin:0">${icon('alert')}<span>请先添加基因，并至少勾选启用一个样品。</span></div>`; return;
       }
-      for(let i=0;i<s;i++) rows+=row(`样品 ${i+1}`,'—');
-      for(let i=0;i<ntc;i++) rows+=row(`NTC`,'—');
-      const mmWater=mm-mix-pfV-prV-vt-vd;
+      if(span>(b.dir==='s'?dim.cols:dim.rows)){
+        out.innerHTML=`<div class="warn-note" style="margin:0">${icon('alert')}<span>技术重复 + NTC = ${span}，超过该方向单板容量（${b.dir==='s'?dim.cols:dim.rows} 孔），请减少或换 ${b.size==='96'?'384':'96'} 孔板。</span></div>`; return;
+      }
+      const {plates}=layout();
+
+      const grids=plates.map((pl,pi)=>{
+        const maxRow=Math.max(...Object.keys(pl.cells).map(k=>+k.split('-')[0]))+1;
+        const maxCol=b.dir==='s'?dim.cols:Math.max(...Object.keys(pl.cells).map(k=>+k.split('-')[1]))+1;
+        let h=`<div class="card" style="box-shadow:none;margin-bottom:12px">
+          <div class="card-t" style="margin-bottom:4px"><h3 style="font-size:14.5px">${icon('grid')}板 ${pi+1}</h3>
+            <span style="font-size:11.5px;color:var(--text-3)">${esc(dim.label)} · ${esc(pl.chunk.join(' / '))} × ${esc(pl.band[0])}${pl.band.length>1?`–${esc(pl.band[pl.band.length-1])}`:''}</span></div>
+          <div class="plate-wrap"><div class="plate" style="grid-template-columns:16px repeat(${maxCol},minmax(20px,1fr))">`;
+        h+=`<div></div>${Array.from({length:maxCol},(_,c)=>`<div class="bx-collab num">${c+1}</div>`).join('')}`;
+        for(let r=0;r<maxRow;r++){
+          h+=`<div class="bx-rowlab">${String.fromCharCode(65+r)}</div>`;
+          for(let c=0;c<maxCol;c++){
+            const w=pl.cells[r+'-'+c];
+            if(!w){ h+=`<div class="pl-well"></div>`; continue; }
+            const [bg,fg]=Q_COLORS[w.gi%Q_COLORS.length];
+            h+=`<button class="pl-well" data-bpw="${pi}|${r}-${c}" style="background:${bg};color:${fg}">${w.type==='NTC'?'N':w.type.slice(-1)}</button>`;
+          }
+        }
+        h+=`</div></div></div>`;
+        return h;
+      }).join('');
+
+      /* 明细 + CSV */
+      const lines=[['板','孔','基因','样品','类型']];
+      plates.forEach((pl,pi)=>{
+        Object.values(pl.cells).forEach(w=>{
+          const [r,c]=w.pos.split('-').map(Number);
+          lines.push([pi+1,wellName(r,c),w.g,w.sm,w.type]);
+        });
+      });
+      const csv=lines.map(r=>r.join(',')).join('\n');
+      const totalWells=lines.length-1;
+
+      /* 试剂汇总（loopseq 式：每基因 eq 管多配，cDNA 只按真实重复孔） */
+      const perGeneWells=plates.reduce((s,pl)=>s+Object.values(pl.cells).filter(w=>w.g===plates[0].chunk[0]).length,0);
+      const gStat=b.genes.map((g,gi)=>{
+        const wells=plates.reduce((s,pl)=>s+Object.values(pl.cells).filter(w=>w.g===g.n).length,0);
+        const parts=wells+b.eq;
+        return { n:g.n, gi, wells, parts,
+          mix:b.vMix*parts, primer:b.vPrimer*parts, water:b.vWater*parts,
+          cdna:b.vCdna*activeRepWells(g.n) };
+      });
+      function activeRepWells(gn){
+        let n=0; plates.forEach(pl=>Object.values(pl.cells).forEach(w=>{ if(w.g===gn&&w.type!=='NTC') n++; }));
+        return n;
+      }
+      const sum=gStat.reduce((a,x)=>({mix:a.mix+x.mix,primer:a.primer+x.primer,water:a.water+x.water,cdna:a.cdna+x.cdna,wells:a.wells+x.wells}),{mix:0,primer:0,water:0,cdna:0,wells:0});
+      const F3=x=>fmtN(x,3);
+      const reagRows=gStat.map(x=>`<tr>
+        <td style="white-space:nowrap"><span class="bp-dot" style="display:inline-block;vertical-align:-1px;background:${Q_COLORS[x.gi%Q_COLORS.length][0]};border:1.5px solid ${Q_COLORS[x.gi%Q_COLORS.length][1]}"></span> ${esc(x.n)}</td>
+        <td class="num">${x.wells}</td><td class="num">${x.parts}</td>
+        <td class="num">${F3(x.mix)}</td><td class="num">${F3(x.primer)}</td><td class="num">${F3(x.water)}</td>
+        <td class="num">${F3(x.cdna)}</td><td class="num" style="color:var(--text-3)">${F3(x.mix+x.primer+x.water+x.cdna)}</td></tr>`).join('');
+      const reagCsv=['基因,反应孔,预混份数,2×Mix(µL),总引物(µL),H2O(µL),cDNA(µL)',
+        ...gStat.map(x=>`${x.n},${x.wells},${x.parts},${F3(x.mix)},${F3(x.primer)},${F3(x.water)},${F3(x.cdna)}`),
+        `合计,${sum.wells},,${F3(sum.mix)},${F3(sum.primer)},${F3(sum.water)},${F3(sum.cdna)}`].join('\n');
+
       out.innerHTML=`
         <div class="result-card">
-          <div class="rl">${icon('zap')}<span>共 ${total} 孔（标准品 ${n} + 样品 ${s} + NTC ${ntc}）· 每孔 ${fmtN(V)} µL</span></div>
-          <div class="rx">每孔加样：2× Mix ${num2(mix)} + F引物 ${num2(pfV)} + R引物 ${num2(prV)}${vt?` + 探针 ${num2(vt)}`:''}${vd?` + 染料 ${num2(vd)}`:''} + <b>标准品/cDNA ${num2(tpl)}</b> + 无酶水 ${num2(water)} µL。<br>标准品行加入稀释方案第 i 管各 ${num2(tpl)} µL；NTC 孔的模板位置加 ${num2(tpl)} µL 无酶水。</div>
-          ${hasC?`<div class="rx">梯度：1号管 ${sciFmt(c1)} copies/µL，逐管 ${fmtN(g)}× 稀释（各管如何配出来见「标准品 10ⁿ 系列稀释方案」）。各孔所加体积相同，梯度体现在标准品管的浓度上。</div>`:''}
+          <div class="rl">${icon('zap')}<span>共 ${plates.length} 块板 · ${totalWells} 个反应孔</span></div>
+          <div class="rx">每基因 ${b.R} 个技术重复${b.ntc?` + ${b.ntc} 个 NTC（加水）`:''}，共 ${b.genes.length} 基因 × ${plates.reduce((s,pl)=>s+pl.band.length,0)?b.samples.filter(s=>s.on).length:0} 个启用样品。N = NTC。</div>
         </div>
+        ${grids}
+        <div class="card" style="box-shadow:none;margin-bottom:12px">
+          <div class="card-t" style="margin-bottom:4px"><h3 style="font-size:14.5px">${icon('flask')}试剂汇总（每基因一管预混 · cDNA 只加真实孔）</h3></div>
+          <div class="tbl-wrap"><table class="tbl">
+            <tr><th>基因</th><th>孔数</th><th>预混份数</th><th>2×Mix</th><th>总引物</th><th>H₂O</th><th>cDNA</th><th>合计µL</th></tr>
+            ${reagRows}
+            <tr><td style="font-weight:800">合计</td><td class="num" style="font-weight:800">${sum.wells}</td><td></td>
+              <td class="num" style="font-weight:800;color:var(--primary)">${F3(sum.mix)}</td>
+              <td class="num" style="font-weight:800;color:var(--primary)">${F3(sum.primer)}</td>
+              <td class="num" style="font-weight:800;color:var(--primary)">${F3(sum.water)}</td>
+              <td class="num" style="font-weight:800;color:var(--primary)">${F3(sum.cdna)}</td><td></td></tr>
+          </table></div>
+          <div class="hint" style="font-size:12px;color:var(--text-3)">预混份数 = 反应孔 + 多配 ${b.eq}（酶/引物/水按多配计）；cDNA 只按真实重复孔计（NTC 加水）。</div>
+        </div>
+        <details class="bp-detail"><summary>排板明细表（${totalWells} 孔）</summary>
+          <div class="tbl-wrap" style="max-height:340px;overflow-y:auto"><table class="tbl">
+            <tr><th>板</th><th>孔</th><th>基因</th><th>样品</th><th>类型</th></tr>
+            ${lines.slice(1).map(r=>`<tr><td class="num">${r[0]}</td><td class="num" style="font-weight:700">${r[1]}</td><td>${esc(r[2])}</td><td>${esc(r[3])}</td><td>${r[4]}</td></tr>`).join('')}
+          </table></div>
+        </details>
+        <div class="frow" style="margin-top:10px">
+          <button class="btn ghost small" id="bp-cp">${icon('copy')}排板 CSV</button>
+          <button class="btn ghost small" id="bp-cpr">${icon('copy')}试剂清单</button>
+          <button class="btn primary small" id="bp-print">${icon('print')}打印</button>
+        </div>`;
+      out.querySelector('#bp-cp').onclick=()=>UI.copy(csv);
+      out.querySelector('#bp-cpr').onclick=()=>UI.copy(reagCsv);
+      out.querySelectorAll('[data-bpw]').forEach(btn=>btn.onclick=()=>{
+        const [pi,key]=btn.dataset.bpw.split('|');
+        const w=plates[+pi].cells[key];
+        if(!w) return;
+        const [r,c]=key.split('-').map(Number);
+        UI.sheet(`
+          <div class="sh-head"><h3>${wellName(r,c)} · 板 ${+pi+1}</h3><button class="icon-btn" data-close>${icon('x')}</button></div>
+          <div class="sh-body"><table class="tbl">
+            <tr><td>基因</td><td style="font-weight:700">${esc(w.g)}</td></tr>
+            <tr><td>样品 / cDNA</td><td style="font-weight:700">${esc(w.sm)}</td></tr>
+            <tr><td>孔类型</td><td>${w.type}${w.type==='NTC'?'（加无酶水）':''}</td></tr>
+            <tr><td>每孔体积</td><td class="num">${fmtN(b.vMix+b.vPrimer+b.vCdna+b.vWater,3)} µL</td></tr>
+          </table></div>`);
+      });
+      out.querySelector('#bp-print').onclick=()=>{
+        const old=document.getElementById('bp-printdoc'); if(old) old.remove();
+        let h=`<div class="bp-printout" id="bp-printdoc"><h2>qPCR 排板单 · ${esc(DB.data.settings.labName)}</h2>`;
+        plates.forEach((pl,pi)=>{
+          const maxRow=Math.max(...Object.keys(pl.cells).map(k=>+k.split('-')[0]))+1;
+          const maxCol=b.dir==='s'?dim.cols:Math.max(...Object.keys(pl.cells).map(k=>+k.split('-')[1]))+1;
+          h+=`<h3>板 ${pi+1} · ${esc(dim.label)} · ${esc(pl.chunk.join(' / '))} × ${esc(pl.band.join(' / '))}</h3>`;
+          h+=`<div class="plate" style="grid-template-columns:16px repeat(${maxCol},1fr)">`;
+          h+=`<div></div>${Array.from({length:maxCol},(_,c)=>`<div class="bx-collab">${c+1}</div>`).join('')}`;
+          for(let r=0;r<maxRow;r++){
+            h+=`<div class="bx-rowlab">${String.fromCharCode(65+r)}</div>`;
+            for(let c=0;c<maxCol;c++){
+              const w=pl.cells[r+'-'+c];
+              if(!w){ h+=`<div class="pl-well"></div>`; continue; }
+              const [bg,fg]=Q_COLORS[w.gi%Q_COLORS.length];
+              h+=`<div class="pl-well" style="background:${bg};color:${fg}">${w.type==='NTC'?'N':w.type.slice(-1)}</div>`;
+            }
+          }
+          h+=`</div>`;
+          h+=`<table><tr><th>孔</th><th>基因</th><th>样品</th><th>类型</th></tr>`;
+          Object.values(pl.cells).forEach(w=>{
+            const [r,c]=w.pos.split('-').map(Number);
+            h+=`<tr><td>${wellName(r,c)}</td><td>${esc(w.g)}</td><td>${esc(w.sm)}</td><td>${w.type}</td></tr>`;
+          });
+          h+=`</table>`;
+        });
+        h+=`<div class="bp-msg">${esc(b.msg||'')}</div></div>`;
+        document.body.insertAdjacentHTML('beforeend',h);
+        window.print();
+      };
+    };
+    this.bind('#bp-r,#bp-ntc,#bp-eq,#bp-dir,#bp-size,#bp-vmix,#bp-vprimer,#bp-vcda,#bp-vwater,#bp-msg', box, ()=>drawResult());
+
+    /* --- 方案保存 / 读取 --- */
+    const drawSaves=()=>{
+      const list=DB.data.qplates||[];
+      box.querySelector('#bp-saves').innerHTML = list.length? list.map(p=>`
+        <div class="bp-li">
+          <span class="bpt">${esc(p.name)} <span style="font-size:11px;color:var(--text-3);font-weight:400">${(p.savedAt||'').slice(0,10)}</span></span>
+          <button class="btn plain small" data-pload="${p.id}">读取</button>
+          <button class="icon-btn" style="width:30px;height:30px" data-pdel="${p.id}">${icon('trash')}</button>
+        </div>`).join('')
+        : `<div class="hint" style="font-size:12px;color:var(--text-3)">还没有保存的方案。排板设置会自动保留，保存方案可长期复用。</div>`;
+      box.querySelectorAll('[data-pload]').forEach(btn=>btn.onclick=()=>{
+        const p=(DB.data.qplates||[]).find(x=>x.id===btn.dataset.pload);
+        if(!p) return;
+        st.bp=JSON.parse(JSON.stringify(p.data));
+        this.qPlate(box); UI.toast('已读取方案');
+      });
+      box.querySelectorAll('[data-pdel]').forEach(btn=>btn.onclick=async ()=>{
+        if(await UI.confirm('删除方案','该保存方案将被删除，不可恢复。',{danger:true,okText:'删除'})){
+          DB.data.qplates=(DB.data.qplates||[]).filter(x=>x.id!==btn.dataset.pdel);
+          DB.save(); drawSaves(); UI.toast('已删除');
+        }
+      });
+    };
+    box.querySelector('#bp-save').onclick=()=>{
+      const name=box.querySelector('#bp-savein').value.trim();
+      if(!name){ UI.toast('请填写方案名称','err'); return; }
+      DB.data.qplates=DB.data.qplates||[];
+      DB.data.qplates.push({id:uid(),name,data:JSON.parse(JSON.stringify(b)),savedAt:new Date().toISOString()});
+      DB.save(); box.querySelector('#bp-savein').value=''; drawSaves(); UI.toast('已保存方案');
+    };
+    drawSaves();
+    drawGenes();
+    drawSamples();
+    drawResult();
+  },
+
+  /* ---- 逆转录：RT 上样（RNA 后加） ---- */
+  qRT(box){
+    if(!this.state.rt) this.state.rt=JSON.parse(JSON.stringify(RT_DEFAULT));
+    box.innerHTML=`
+      <div class="card">
+        <div class="card-t"><h3>${icon('swap')}逆转录 RT · 上样计算</h3><span class="badge teal">RNA 后加</span></div>
+        <div class="frow">
+          <div class="fld"><span>样品数</span><div class="ctl"><input id="rt-n" type="number" inputmode="numeric" value="6"></div></div>
+          <div class="fld"><span>多配份数</span><div class="ctl"><input id="rt-eq" type="number" inputmode="numeric" value="1"></div></div>
+          <div class="fld"><span>总体积/孔</span><div class="ctl"><input id="rt-v" type="number" inputmode="decimal" value="20"><span class="u">µL</span></div></div>
+        </div>
+        <div class="fld"><span>各组分用量（µL/孔，可改）</span><div id="rt-rows"></div></div>
+        <div id="rt-out"></div>
+      </div>
+      <div class="info-note">${icon('info')}<span>常用程序：<b>25℃ 10 min（随机引物）→ 42–55℃ 30–60 min → 70–85℃ 5–15 min 灭活</b>（以酶说明书为准）。RNA 与引物可先 65℃ 5 min 变性、冰上速冷再组装，产量更高；全程冰上操作、用无 RNase 耗材。RNA 体积不足的孔先用无 RNase 水补齐。</span></div>`;
+    const rowsBox=box.querySelector('#rt-rows');
+    const draw=()=>{
+      const S=Math.max(0,getNum('#rt-n')||0), eq=Math.max(0,getNum('#rt-eq')||0), V=getNum('#rt-v')||0;
+      const rows=this.state.rt;
+      const parts=S+eq;
+      const sum=rows.reduce((s,r)=>s+(r.v||0),0);
+      const rna=rows.filter(r=>r.rna).reduce((s,r)=>s+(r.v||0),0);
+      const water=V-sum;
+      const mmV=V-rna;
+      rowsBox.innerHTML=`<table class="ivt-table">
+        <tr><th>组分</th><th>µL / 孔</th><th style="text-align:right">合计</th></tr>
+        ${rows.map((r,i)=>`<tr>
+          <td style="font-size:12.5px;font-weight:600">${r.n}${r.rna?' <span class="badge orange">后加</span>':''}</td>
+          <td><input class="mini-in" type="number" inputmode="decimal" value="${r.v}" data-rtv="${i}"></td>
+          <td style="text-align:right;font-weight:700;color:var(--primary)" class="num">${r.rna?fmtN(r.v*S,3):fmtN(r.v*parts,3)}</td>
+        </tr>`).join('')}
+        <tr><td style="font-weight:700">无 RNase 水</td>
+          <td class="num" style="font-weight:800;color:var(--primary)">${water>=0?fmtN(water,3):'—'}</td>
+          <td class="num" style="text-align:right;font-weight:700">${water>=0?fmtN(water*parts,3):'—'}</td></tr>
+      </table>`;
+      box.querySelector('#rt-out').innerHTML = !V||!S? '' : water<0
+        ? `<div class="warn-note" style="margin-top:12px">${icon('alert')}<span>各组分体积已超过总体积 ${fmtN(V)} µL，请调整。</span></div>`
+        : `<div class="result-card">
+            <div class="rl">${icon('zap')}<span>预混液（不含 RNA）</span></div>
+            <div class="rv num">${fmtN(mmV*parts,3)}<small>µL</small></div>
+            <div class="rx">${parts} 份（样品 ${S} + 多配 ${eq}）× 每份 ${fmtN(mmV,3)} µL（= 总体积 − RNA）。每管分装 ${fmtN(mmV,3)} µL，再各加入 RNA ${fmtN(rna,3)} µL；RNA 共需 ${fmtN(rna*S,3)} µL（只按 ${S} 个真实样品计，不加多配）。</div>
+          </div>`;
+      rowsBox.querySelectorAll('[data-rtv]').forEach(i=>i.onchange=()=>{ rows[+i.dataset.rtv].v=parseFloat(i.value)||0; draw(); });
+    };
+    this.bind('#rt-n,#rt-eq,#rt-v', box, draw);
+    draw();
+  },
+
+  /* ---- 结果分析：ΔΔCq 多组 + 显著性 + 标准曲线 ---- */
+  qAna(box){
+    box.innerHTML=`
+      <div class="card">
+        <div class="card-t"><h3>${icon('sigma')}ΔΔCq 多组分析</h3><span class="badge teal">ANOVA · t 检验</span></div>
+        <div class="fld"><span>粘贴数据（每行一条：分组, 靶基因Cq, 内参Cq）</span>
+          <div class="ctl"><textarea id="qa-in" rows="6" placeholder="对照, 24.1, 16.2&#10;对照, 24.3, 16.0&#10;对照, 23.9, 16.3&#10;处理, 22.4, 16.1&#10;处理, 22.6, 15.9&#10;处理, 22.2, 16.2" style="font-family:ui-monospace,Menlo,monospace"></textarea></div>
+          <div class="hint">支持逗号 / Tab / 空格分隔，可直接从 Excel 粘贴；每行 = 一个生物学重复。每组 ≥2 个重复才能做显著性检验。</div>
+        </div>
+        <div class="frow">
+          <div class="fld"><span>对照组</span><div class="ctl"><select id="qa-ctrl"></select></div></div>
+          <div class="fld"><span>靶基因效率 E</span><div class="ctl"><input id="qa-et" type="number" inputmode="decimal" value="2"><span class="u">倍</span></div></div>
+          <div class="fld"><span>内参效率 E</span><div class="ctl"><input id="qa-er" type="number" inputmode="decimal" value="2"><span class="u">倍</span></div></div>
+        </div>
+        <button class="btn plain small" id="qa-demo">${icon('edit')}填入示例</button>
+        <div id="qa-out"></div>
+      </div>
+      <div class="info-note">${icon('info')}<span>统计在每孔 ΔCq（靶 − 内参）上进行：≥3 组用单因素 ANOVA，任意两组间用 Welch t 检验（Bonferroni 校正）；<b>*</b>p&lt;0.05、<b>**</b>p&lt;0.01、<b>***</b>p&lt;0.001、<b>****</b>p&lt;0.0001。效率填 2 = 标准 2^−ΔΔCq 法；填实测效率则按 Pfaffl 法校正。MIQE 建议：效率 90–110%、R²≥0.99。</span></div>
+
+      <div class="card">
+        <div class="card-t"><h3>${icon('target')}标准曲线 · 扩增效率</h3></div>
+        <div class="fld"><span>粘贴数据（每行一条：相对浓度, Cq）</span>
+          <div class="ctl"><textarea id="qc-sc" rows="4" placeholder="1, 15.32&#10;0.1, 18.65&#10;0.01, 21.98&#10;0.001, 25.30&#10;0.0001, 28.65" style="font-family:ui-monospace,Menlo,monospace"></textarea></div>
+          <div class="hint">相对浓度＝相对最高浓度标准品的倍数（10× 梯度依次填 1 / 0.1 / 0.01 / 0.001 / 0.0001）；支持逗号、空格、Tab 分隔，可直接从 Excel 粘贴</div>
+        </div>
+        <button class="btn plain small" id="qc-demo">${icon('edit')}填入示例</button>
+        <div id="qc-scout"></div>
+      </div>`;
+
+    /* --- ΔΔCq 多组分析 --- */
+    const parseAna=txt=>{
+      const rows=[];
+      String(txt).split(/\n+/).forEach(line=>{
+        if(!line.trim()) return;
+        let f=line.split(/[,;\t]/).map(s=>s.trim());
+        if(f.length<3){
+          const tk=line.trim().split(/\s+/);
+          if(tk.length>=3) f=[tk.slice(0,tk.length-2).join(' '),tk[tk.length-2],tk[tk.length-1]];
+          else return;
+        }
+        const t=parseFloat(f[1]), r=parseFloat(f[2]);
+        if(f[0]&&isFinite(t)&&isFinite(r)) rows.push({g:f[0],t,r});
+      });
+      return rows;
+    };
+    const runAna=()=>{
+      const out=box.querySelector('#qa-out');
+      const rows=parseAna(box.querySelector('#qa-in').value);
+      if(rows.length<2){ out.innerHTML=''; return; }
+      const groups=[];
+      rows.forEach(x=>{
+        let g=groups.find(y=>y.name===x.g);
+        if(!g){ g={name:x.g,t:[],r:[],d:[]}; groups.push(g); }
+        g.t.push(x.t); g.r.push(x.r); g.d.push(x.t-x.r);
+      });
+      /* 对照组下拉（保留已选项） */
+      const sel=box.querySelector('#qa-ctrl');
+      const cur=this.state.qctrl&&groups.some(g=>g.name===this.state.qctrl)? this.state.qctrl : groups[0].name;
+      sel.innerHTML=groups.map(g=>`<option ${g.name===cur?'selected':''}>${esc(g.name)}</option>`).join('');
+      const ctrl=groups.find(g=>g.name===sel.value)||groups[0];
+      const Et=getNum('#qa-et')||2, Er=getNum('#qa-er')||2;
+      if(Et<=1||Er<=1){ out.innerHTML=`<div class="warn-note" style="margin:0">${icon('alert')}<span>扩增效率应大于 1（如 1.9 / 2.0）。</span></div>`; return; }
+      const mTc=ctrl.t.reduce((s,v)=>s+v,0)/ctrl.t.length;
+      const mRc=ctrl.r.reduce((s,v)=>s+v,0)/ctrl.r.length;
+      const stat=groups.map(g=>{
+        const mD=this.meanSd(g.d);
+        const fold=Math.pow(Et,mTc-g.t.reduce((s,v)=>s+v,0)/g.t.length)/Math.pow(Er,mRc-g.r.reduce((s,v)=>s+v,0)/g.r.length);
+        const ratios=g.t.map((t,i)=>Math.pow(Et,mTc-t)/Math.pow(Er,mRc-g.r[i]));
+        const sdR=this.meanSd(ratios);
+        const tw=g===ctrl?null:this.tTestWelch(g.d,ctrl.d);
+        return {name:g.name,n:g.d.length,d:g.d,mD,fold,sd:sdR?sdR.sd:null,tw,ctrl:g===ctrl};
+      });
+      const k=stat.length, comps=k-1;
+      stat.forEach(s=>{ if(s.tw){ s.p=Math.min(1,s.tw.p*comps); s.star=this.sigStars(s.p); } });
+      const av=this.anova1w(groups.map(g=>g.d));
+      const bars=stat.map(s=>({name:s.name,fold:s.fold,hi:s.fold+(s.sd||0),lo:s.fold-(s.sd||0),star:s.star||(s.ctrl?'':(s.p<0.05?this.sigStars(s.p):'ns')),ctrl:s.ctrl}));
+      const tbl=stat.map(s=>{
+        const dd=s.mD.m-(stat.find(x=>x.ctrl).mD.m);
+        const pTxt=s.ctrl?'—':(s.p<0.0001?'<0.0001':s.p.toFixed(4));
+        return `<tr>
+          <td style="font-weight:${s.ctrl?800:600};white-space:nowrap">${esc(s.name)}${s.ctrl?' <span class="badge blue">对照</span>':''}</td>
+          <td class="num">${s.n}</td>
+          <td class="num">${s.mD.m.toFixed(2)} ± ${s.mD.sd.toFixed(2)}</td>
+          <td class="num">${s.ctrl?'0':(dd>=0?'+':'')+dd.toFixed(2)}</td>
+          <td class="num" style="font-weight:800;color:var(--primary)">${fmtN(s.fold,3)}</td>
+          <td class="num">${pTxt}</td>
+          <td style="font-weight:800;color:${(s.star||'')==='ns'||s.ctrl?'var(--text-3)':'var(--red)'}">${s.ctrl?'':(s.star||'ns')}</td>
+        </tr>`;
+      }).join('');
+      const anovaTxt = av? `单因素 ANOVA：F(${av.df1},${av.df2}) = ${av.F.toFixed(2)}，p ${av.p<0.0001?'<0.0001':'= '+av.p.toFixed(4)} ${av.p<0.05?`<span class="badge red">组间差异显著</span>`:`<span class="badge gray">组间无显著差异</span>`}`:'';
+      const copyTxt=`ΔΔCq结果: `+stat.map(s=>`${s.name}: fold=${s.fold.toFixed(3)}${s.star?` (${s.star})`:''}`).join('; ')+(av?`; ANOVA p=${av.p<0.0001?'<0.0001':av.p.toFixed(4)}`:'');
+      out.innerHTML=`
+        ${this.qBarChart(bars)}
         <div class="tbl-wrap"><table class="tbl">
-          <tr><th>孔</th>${hasC?'<th>浓度 copies/µL</th>':''}<th>2×Mix(µL)</th><th>F引物</th><th>R引物</th><th>探针</th><th>染料</th><th>标准品/模板</th><th>无酶水</th></tr>
-          ${rows}
+          <tr><th>组别</th><th>n</th><th>ΔCq</th><th>ΔΔCq</th><th>相对量</th><th>vs 对照 p*</th><th>显著性</th></tr>
+          ${tbl}
         </table></div>
-        <div class="info-note" style="margin:0">${icon('info')}<span><b>省力做法（预混液）</b>：按 ${total} 孔 + ${fmtN(ov)}% 余量 = <b>${fmtN(M,3)} 份</b>，每份 ${num2(mm)} µL：2× Mix ${T(mix)} + F引物 ${T(pfV)} + R引物 ${T(prV)}${vt?` + 探针 ${T(vt)}`:''}${vd?` + 染料 ${T(vd)}`:''} + 无酶水 ${T(mmWater)} µL，涡旋混匀后每孔分装 ${num2(mm)} µL，最后各孔分别加入 ${num2(tpl)} µL 对应标准品/样品 cDNA（NTC 加水），封膜离心上机。</span></div>`;
+        <div class="info-note" style="margin:0">${icon('info')}<span>* vs 对照 p 为 Welch t 检验经 Bonferroni 校正（×${Math.max(1,comps)}）；柱上误差线 = ±SD。${anovaTxt}</span></div>
+        <button class="btn plain small" id="qa-cp" style="margin-top:10px">${icon('copy')}复制结果</button>`;
+      box.querySelector('#qa-cp').onclick=()=>UI.copy(copyTxt);
     };
-    this.bind('#pl-n,#pl-s,#pl-ntc,#pl-v,#pl-tpl,#pl-ov,#pl-pf,#pl-ps,#pl-tf,#pl-ts,#pl-df,#pl-ds,#pl-c1,#pl-g', p, calcPL);
-    calcPL();
-
-    /* --- ΔΔCq --- */
-    const calcDD=()=>{
-      const out=p.querySelector('#qc-ddout');
-      const tt=this.meanSd(this.parseNums(p.querySelector('#qc-tt').value));
-      const tc=this.meanSd(this.parseNums(p.querySelector('#qc-tc').value));
-      const rt=this.meanSd(this.parseNums(p.querySelector('#qc-rt').value));
-      const rc=this.meanSd(this.parseNums(p.querySelector('#qc-rc').value));
-      if(!tt||!tc||!rt||!rc){ out.innerHTML=''; return; }
-      const dCqT=tt.m-rt.m, dCqC=tc.m-rc.m, dd=dCqT-dCqC;
-      const fold=Math.pow(2,-dd);
-      const dir=dd<-0.05?'上调 ⬆':dd>0.05?'下调 ⬇':'无显著变化 →';
-      out.innerHTML=resultCard({label:'相对表达量（2^−ΔΔCq）', value:fmtN(fold), unit:'倍',
-        extra:`ΔCq 处理组 ${dCqT.toFixed(2)} · 对照组 ${dCqC.toFixed(2)} · ΔΔCq ${dd>=0?'+':''}${dd.toFixed(2)} → ${dir}<br>
-          重复数：靶 ${tt.n}/${tc.n}，内参 ${rt.n}/${rc.n}${tt.sd?`；SD ${tt.sd.toFixed(2)}/${tc.sd.toFixed(2)}`:''}`,
-        copyText:`ΔΔCq=${dd.toFixed(2)}, fold change=${fold.toFixed(2)}`});
+    this.bind('#qa-in', box, runAna);
+    box.querySelector('#qa-ctrl').addEventListener('change', ()=>{ this.state.qctrl=box.querySelector('#qa-ctrl').value; runAna(); });
+    this.bind('#qa-et,#qa-er', box, runAna);
+    box.querySelector('#qa-demo').onclick=()=>{
+      box.querySelector('#qa-in').value='对照, 24.1, 16.2\n对照, 24.3, 16.0\n对照, 23.9, 16.3\n处理, 22.4, 16.1\n处理, 22.6, 15.9\n处理, 22.2, 16.2';
+      runAna();
     };
-    this.bind('#qc-tt,#qc-tc,#qc-rt,#qc-rc', p, calcDD);
+    runAna();
 
-    /* --- Pfaffl --- */
-    const calcPF=()=>{
-      const out=p.querySelector('#qf-out');
-      const tt=getNum('#qf-tt'), tc=getNum('#qf-tc'), rt=getNum('#qf-rt'), rc=getNum('#qf-rc');
-      const et=getNum('#qf-et'), er=getNum('#qf-er');
-      if([tt,tc,rt,rc,et,er].some(isNaN) || et<=1 || er<=1){ out.innerHTML=''; return; }
-      const ratio=Math.pow(et, tc-tt)/Math.pow(er, rc-rt);
-      const dir=ratio>1.2?'上调 ⬆':ratio<0.83?'下调 ⬇':'≈无变化 →';
-      out.innerHTML=resultCard({label:'效率校正相对表达量（Pfaffl）', value:fmtN(ratio), unit:'倍',
-        extra:`(${et.toFixed(2)})^(${tc.toFixed(2)}−${tt.toFixed(2)}) ÷ (${er.toFixed(2)})^(${rc.toFixed(2)}−${rt.toFixed(2)}) → ${dir}`,
-        copyText:`Pfaffl ratio=${ratio.toFixed(3)}`});
+    /* --- 标准曲线 --- */
+    const calcSC=()=>{
+      const out=box.querySelector('#qc-scout');
+      const pts=[];
+      box.querySelector('#qc-sc').value.split(/\n+/).forEach(line=>{
+        const nums=(line.match(/-?\d*\.?\d+(?:e[+-]?\d+)?/gi)||[]).map(Number);
+        if(nums.length>=2 && nums[0]>0 && isFinite(nums[1])) pts.push({x:Math.log10(nums[0]), y:nums[1]});
+      });
+      if(pts.length<2){ out.innerHTML=''; return; }
+      const fit=this.linreg(pts);
+      if(!fit || fit.m>=0){ out.innerHTML=`<div class="warn-note" style="margin:0">${icon('alert')}<span>至少需要 2 行有效数据，且斜率应为负值（浓度越高 Cq 越小）。请检查输入。</span></div>`; return; }
+      const E=Math.pow(10,-1/fit.m)-1, pct=E*100;
+      const verdict = (pct>=90&&pct<=110&&fit.r2>=0.99)? '<span class="badge green">优秀，可用于定量</span>'
+        : (pct>=80&&pct<=120&&fit.r2>=0.98)? '<span class="badge orange">基本合格，建议优化</span>'
+        : '<span class="badge red">不合格，需重新设计/优化</span>';
+      const amp = Math.pow(10,-1/fit.m);
+      const rows=pts.map(q=>`<tr><td class="num">${fmtN(Math.pow(10,q.x),3)}</td><td class="num">${q.y.toFixed(2)}</td><td class="num">${(fit.m*q.x+fit.b).toFixed(2)}</td><td class="num" style="color:var(--text-3)">${(q.y-(fit.m*q.x+fit.b)>=0?'+':'')+(q.y-(fit.m*q.x+fit.b)).toFixed(2)}</td></tr>`).join('');
+      out.innerHTML=`
+        <div class="result-card">
+          <div class="rl">${icon('zap')}<span>扩增效率 E</span></div>
+          <div class="rv num">${pct.toFixed(1)}<small>%</small></div>
+          <div class="rx">斜率 <b>${fit.m.toFixed(3)}</b> · 截距 <b>${fit.b.toFixed(2)}</b> · R² <b>${fit.r2.toFixed(4)}</b> · 每循环扩增 ${amp.toFixed(2)} 倍 ${verdict}</div>
+        </div>
+        ${this.qcChart(pts,fit)}
+        <div class="tbl-wrap"><table class="tbl"><tr><th>相对浓度</th><th>实测 Cq</th><th>拟合 Cq</th><th>残差</th></tr>${rows}</table></div>`;
     };
-    this.bind('#qf-tt,#qf-tc,#qf-rt,#qf-rc,#qf-et,#qf-er', p, calcPF);
+    this.bind('#qc-sc', box, calcSC);
+    box.querySelector('#qc-demo').onclick=()=>{
+      box.querySelector('#qc-sc').value='1, 15.32\n0.1, 18.65\n0.01, 21.98\n0.001, 25.30\n0.0001, 28.65';
+      calcSC();
+    };
+  },
 
-    /* --- 拷贝数 --- */
+  /* ---- 拷贝数换算 ---- */
+  qCopy(box){
+    box.innerHTML=`
+      <div class="card">
+        <div class="card-t"><h3>${icon('dna')}拷贝数换算</h3></div>
+        <div class="frow">
+          <div class="fld"><span>质量</span><div class="ctl"><input id="cn-ng" type="number" inputmode="decimal" placeholder="如 1"><span class="u">ng</span></div></div>
+          <div class="fld"><span>片段长度</span><div class="ctl"><input id="cn-bp" type="number" inputmode="decimal" placeholder="bp"><span class="u">bp</span></div></div>
+          <div class="fld"><span>类型</span><div class="ctl"><select id="cn-ty"><option value="660">dsDNA</option><option value="330">ssDNA</option><option value="340">ssRNA</option></select></div></div>
+        </div>
+        <div class="fld"><span>稀释总体积（选填）</span><div class="ctl"><input id="cn-v" type="number" inputmode="decimal" placeholder="如 100"><span class="u">µL</span></div></div>
+        <div id="cn-out1"></div>
+        <div class="sec-gap"></div>
+        <div class="frow">
+          <div class="fld"><span>标准曲线斜率 m</span><div class="ctl"><input id="ca-m" type="number" inputmode="decimal" placeholder="如 -3.32"></div></div>
+          <div class="fld"><span>截距 b</span><div class="ctl"><input id="ca-b" type="number" inputmode="decimal" placeholder="如 36.8"></div></div>
+        </div>
+        <div class="frow">
+          <div class="fld"><span>样品 Cq</span><div class="ctl"><input id="ca-cq" type="number" inputmode="decimal"></div></div>
+          <div class="fld"><span>上样前稀释倍数</span><div class="ctl"><input id="ca-d" type="number" inputmode="decimal" value="1"></div></div>
+        </div>
+        <div id="cn-out2"></div>
+      </div>`;
     const calcCN=()=>{
-      const ng=getNum('#cn-ng'), bp=getNum('#cn-bp'), f=parseFloat(p.querySelector('#cn-ty').value), v=getNum('#cn-v');
-      const o1=p.querySelector('#cn-out1');
+      const ng=getNum('#cn-ng'), bp=getNum('#cn-bp'), f=parseFloat(box.querySelector('#cn-ty').value), v=getNum('#cn-v');
+      const o1=box.querySelector('#cn-out1');
       if(!isNaN(ng)&&!isNaN(bp)&&bp>0&&ng>0){
         const copies=ng*1e-9*6.022e23/(bp*f);
         let extra=`拷贝数 = 质量 ÷ (${fmtN(bp)} bp × ${f} g/mol per ${/660/.test(String(f))?'bp':'nt'}) × 6.022×10²³`;
@@ -671,7 +1194,7 @@ PAGES.tools = {
           extra, copyText:sciFmt(copies)});
       } else o1.innerHTML='';
       const m=getNum('#ca-m'), b=getNum('#ca-b'), cq=getNum('#ca-cq'), d=getNum('#ca-d')||1;
-      const o2=p.querySelector('#cn-out2');
+      const o2=box.querySelector('#cn-out2');
       if(!isNaN(m)&&!isNaN(b)&&m<0&&!isNaN(cq)){
         const copies=Math.pow(10,(cq-b)/m)*d;
         o2.innerHTML=resultCard({label:'样品拷贝数（由标准曲线反推）', value:sciFmt(copies), unit:'copies/µL',
@@ -679,37 +1202,7 @@ PAGES.tools = {
           copyText:sciFmt(copies)});
       } else o2.innerHTML='';
     };
-    this.bind('#cn-ng,#cn-bp,#cn-ty,#cn-v,#ca-m,#ca-b,#ca-cq,#ca-d', p, calcCN);
-
-    /* --- 反应体系 --- */
-    const calcQM=()=>{
-      const V=getNum('#qm-v'), pf=getNum('#qm-pf'), ps=getNum('#qm-ps'),
-            tf=getNum('#qm-tf'), ts=getNum('#qm-ts'), tpl=getNum('#qm-tpl')||0,
-            df=getNum('#qm-df')||0, ds=getNum('#qm-ds')||25, dil=getNum('#qm-dil')||1;
-      const out=p.querySelector('#qm-out');
-      if([V,pf,ps,tf,ts].some(isNaN) || V<=0){ out.innerHTML=''; return; }
-      const mix=V/2, vt=(tf*V/ts)||0, vd=(df>0&&ds>0)? df*V/ds : 0;
-      const pfV=pf*V/ps, prV=pf*V/ps;
-      const water=V-mix-pfV-prV-vt-vd-tpl;
-      if(water<0){ out.innerHTML=`<div class="warn-note" style="margin:0">${icon('alert')}<span>各组分体积已超过总体积 ${fmtN(V)} µL，请调整。</span></div>`; return; }
-      const tplNote = dil>1 ? `<br>模板：cDNA 先按 1:${fmtN(dil)} 预稀释，取稀释液 ${fmtN(tpl,3)} µL（相当于原液 ${fmtN(tpl/dil,3)} µL）` : '';
-      out.innerHTML=resultCard({label:'补无 RNase 水（ddH₂O）', value:fmtN(water,3), unit:'µL',
-        extra:`2× Mix ${fmtN(mix,3)} + 上游引物 ${fmtN(pfV,3)} + 下游引物 ${fmtN(prV,3)} + 探针 ${fmtN(vt,3)}${vd>0?` + 染料 ${fmtN(vd,3)}`:''} + cDNA ${fmtN(tpl,3)} + 水 ${fmtN(water,3)} = ${fmtN(V)} µL${tplNote}<br>仅 SYBR 法：把探针终浓度填 0；多数 2× Mix 已含染料，ROX 按仪器要求填（ABI 常为 0.5×）`,
-        copyText:`2×Mix ${mix}µL, 引物各 ${pfV.toFixed(2)}µL, 探针 ${vt.toFixed(2)}µL${vd>0?`, 染料 ${vd.toFixed(2)}µL`:''}, cDNA ${tpl}µL, 水 ${water.toFixed(2)}µL`});
-    };
-    this.bind('#qm-v,#qm-pf,#qm-ps,#qm-tf,#qm-ts,#qm-tpl,#qm-df,#qm-ds,#qm-dil', p, calcQM);
-
-    /* --- 分组筛选：绝对定量 / 相对定量 / 反应体系 --- */
-    const applyQG=()=>{
-      const on=p.querySelector('#qg-chips .chip.on');
-      const g=on?on.dataset.qg2:'all';
-      p.querySelectorAll('[data-qg]').forEach(c=>{ c.style.display=(g==='all'||c.dataset.qg===g)?'':'none'; });
-    };
-    p.querySelectorAll('[data-qg2]').forEach(b=>b.onclick=()=>{
-      p.querySelectorAll('[data-qg2]').forEach(x=>x.classList.toggle('on',x===b));
-      applyQG();
-    });
-    applyQG();
+    this.bind('#cn-ng,#cn-bp,#cn-ty,#cn-v,#ca-m,#ca-b,#ca-cq,#ca-d', box, calcCN);
   },
 
   /* ============ 速查表 ============ */
