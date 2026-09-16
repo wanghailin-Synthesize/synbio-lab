@@ -48,7 +48,9 @@ window.PAGES = window.PAGES || {};
     vial:'<path d="M8.5 2.5h7"/><path d="M9.5 2.5v14a2.5 2.5 0 0 0 5 0v-14"/><path d="M9.5 11h5"/>',
     sparkle:'<path d="M12 3l1.9 5.6L19.5 10.5l-5.6 1.9L12 18l-1.9-5.6L4.5 10.5l5.6-1.9z"/><path d="M19 16.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/>',
     target:'<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.6"/><circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none"/>',
-    sigma:'<path d="M17 5H7l5.5 7L7 19h10"/>'
+    sigma:'<path d="M17 5H7l5.5 7L7 19h10"/>',
+    cloud:'<path d="M17.5 19H9a7 7 0 1 1 6.7-9h1.8a4.5 4.5 0 0 1 0 9z"/>',
+    users:'<circle cx="9" cy="8" r="3.5"/><path d="M3.5 20c.5-4 3-6 5.5-6s5 2 5.5 6"/><path d="M16 5.2a3.5 3.5 0 0 1 0 5.6"/><path d="M17.5 14.6c1.7.8 2.7 2.7 3 5.4"/>'
   };
   window.icon = function(name, cls){
     const p = P[name] || P.info;

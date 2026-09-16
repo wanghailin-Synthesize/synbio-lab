@@ -9,6 +9,7 @@ PAGES.notebook = {
       <div class="page-head">
         <div><div class="ht">实验记录</div><div class="hs">${d.entries.length} 条记录 · ${d.projects.length} 个项目</div></div>
         <div class="hact">
+          <button class="icon-btn" data-go="export" title="导出 Word/图片">${icon('download')}</button>
           <button class="icon-btn" data-pjmg title="项目管理">${icon('sliders')}</button>
           <button class="btn primary small" data-go="nbform">${icon('plus')}新记录</button>
         </div>
